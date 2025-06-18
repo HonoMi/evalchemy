@@ -22,6 +22,8 @@ class BaseBenchmark(ABC):
     def __init__(self, logger: Optional[logging.Logger] = None, system_instruction: Optional[str] = None):
         self.logger = logger or logging.getLogger(self.__class__.__name__)
         self.system_instruction = system_instruction
+        self._prompt_think_tag = bool(int(os.getenv("EVALCHEMY_PROMPT_THINK_TAG", 0)))
+
 
     def _normalize_model_args(self, model: LM, instances: List[Instance]) -> List[Instance]:
         for instance in instances:
@@ -74,8 +76,16 @@ class BaseBenchmark(ABC):
             messages.insert(0, {"role": "system", "content": self.system_instruction})
 
         if model is not None:
-            return model.apply_chat_template(messages)
+            msg = model.apply_chat_template(messages)
+            if self._prompt_think_tag:
+                msg = msg + "\n<think>"
+            # from pprint import pprint
+            # print(msg)
+            # raise
+            return msg
 
+        if self._prompt_think_tag:
+            raise NotImplementedError()
         return messages
 
     def compute(self, model: LM, inputs: List[Instance], do_slice: bool = True) -> List[str]:

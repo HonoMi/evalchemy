@@ -104,7 +104,8 @@ class MMLUProBenchmark(BaseBenchmark):
         self.dataset_name = "TIGER-Lab/MMLU-Pro"
         self.ntrain = ntrain
         self.max_model_length = max_model_length
-        self.max_new_tokens = max_tokens
+        # self.max_new_tokens = max_tokens
+        self.max_new_tokens = max_tokens if max_tokens is not None else int(max_model_length / 2)
         self.debug = debug
         self.seed = seed
 

@@ -187,3 +187,6 @@ Shopee-SlimMoA-v1,-0.6930943742294789,0.5778443790027642,1.4506276222723822
 blendaxai-gm-l6-vo31,-1.4827230167114802,0.8256378421072179,1.5942312525409852
 REBEL-Llama-3-8B-Instruct-Armo,-1.0427168605260002,0.6464073051877255,0.0395191056877229
 "model_openai-chat-completions_model_args_pretrained=gpt-4o-2024-08-06,tokenized_requests=False,batch_size=1,num_concurrent=32",-1.3853714278693416,0.7079153686922870,0.3059799684154327
+"model_vllm_model_args_dtype=auto,pretrained=Qwen__Qwen2.5-7B-Instruct-1M,gpu_memory_utilization=0.8,trust_remote_code=True,tensor_parallel_size=4,batch_size=auto",-1.4726236522180367,0.7838941696155775,-1.0442863749973470
+"model_vllm_model_args_dtype=auto,pretrained=outputs.ABCI-3.0__model_cache__144170ca3b65ce59fda7adbb0e23a846,gpu_memory_utilization=0.8,trust_remote_code=True,tensor_parallel_size=4,batch_size=auto",-1.6646595442959555,0.8222140076654927,-1.1400116413948436
+"model_vllm_model_args_dtype=auto,pretrained=outputs.ABCI-3.0__model_cache__144170ca3b65ce59fda7adbb0e23a846,gpu_memory_utilization=0.8,trust_remote_code=True,tensor_parallel_size=1,batch_size=auto",-1.6459706283240036,0.8800848832856432,-1.1010928985676500
