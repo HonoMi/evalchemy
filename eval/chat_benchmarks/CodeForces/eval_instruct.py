@@ -26,6 +26,9 @@ def has_code(response):
     pattern = r"```(?:[a-zA-Z]*)\n(.*?)```"
     # Use re.DOTALL to match multiline content inside backticks
     matches = re.findall(pattern, response, re.DOTALL)
+    if not matches:
+        pattern = r"<answer>(.*?)</answer>"
+        matches = re.findall(pattern, response, re.DOTALL)
     return matches
 
 
