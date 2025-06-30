@@ -153,6 +153,9 @@ dependencies = [
     # SWE-bench
     "swebench>=3.0.4",
 
+    # LiveCodeBench
+    "func_timeout",
+
     # LM Eval
     # "lm-eval[vllm] @ git+https://github.com/EtashGuha/lm-evaluation-harness@etashg/tokenize_fix",
     "lm-eval[vllm] @ git+https://github.com/EtashGuha/lm-evaluation-harness.git@etashg/tokenize_fix",

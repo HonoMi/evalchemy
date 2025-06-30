@@ -16,7 +16,21 @@ import time
 import zlib
 from typing import Callable, Dict, Optional
 
+import copy, time
+
 import scipy.stats as stats
+
+
+from func_timeout import func_timeout, FunctionTimedOut
+# TIME_LIMIT = 0.01
+TIME_LIMIT = 3.0
+
+
+def run_with_timeout(func, timeout, *args, **kwargs):
+    try:
+        return func_timeout(timeout, func, args=args, kwargs=kwargs)
+    except FunctionTimedOut:
+        raise TimeoutError(f"timed out after {timeout} sec")
 
 
 def reliability_guard(maximum_memory_bytes: Optional[int] = None):
@@ -240,12 +254,31 @@ def run_tests_for_one_example(test_cases, completion, result_list, is_extracted)
             time_start = time.time()
             if test_type == "functional":
                 test_input, test_output = prepare_test_input_output_functional(test_case, is_extracted)
-                passed, output_value = run_test_func(
-                    completion, is_extracted, copy.deepcopy(test_input), copy.deepcopy(test_output)
+                # passed, output_value = run_test_func(
+                #     completion, is_extracted, copy.deepcopy(test_input), copy.deepcopy(test_output)
+                # )
+                passed, output_value = run_with_timeout(
+                    run_test_func, TIME_LIMIT,
+                    completion, is_extracted,
+                    copy.deepcopy(test_input), copy.deepcopy(test_output)
                 )
             else:
                 test_input, test_output = prepare_test_input_output_std(test_case)
-                passed, output_value = run_test_std(completion, copy.deepcopy(test_input), copy.deepcopy(test_output))
+                # passed, output_value = run_test_std(completion, copy.deepcopy(test_input), copy.deepcopy(test_output))
+                passed, output_value = run_with_timeout(
+                    run_test_std, TIME_LIMIT,
+                    completion,
+                    copy.deepcopy(test_input), copy.deepcopy(test_output)
+                )
+                from pprint import pprint, pformat
+                with open('tmp.txt', 'w') as f:
+                    f.write('=============\n')
+                    f.write(pformat(completion) + '\n')
+                    f.write('=============\n')
+                    f.write(pformat(test_input) + '\n')
+                    f.write('=============\n')
+                    f.write(pformat(test_output) + '\n')
+
             time_elapsed = time.time() - time_start
             if not passed:
                 output_error = (

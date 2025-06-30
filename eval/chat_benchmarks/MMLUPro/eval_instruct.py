@@ -187,6 +187,7 @@ class MMLUProBenchmark(BaseBenchmark):
             correct = int(ex["pred"] == ex["answer"])
             area_stats[cat]["total"] += 1
             area_stats[cat]["corr"] += correct
+            ex["accuracy"] = correct  # store correctness in example for later use
             correct_flags.append(correct)
     
         n = len(correct_flags)
@@ -200,7 +201,7 @@ class MMLUProBenchmark(BaseBenchmark):
             "accuracy_avg": overall_accuracy,
             "accuracy_std_err": overall_accuracy_stderr,
             "total_examples": n,
-            "examples": examples,
+            "examples": examples,   # HONOKA added
         }
     
         # per‑category stats (needed for macro‑averages)

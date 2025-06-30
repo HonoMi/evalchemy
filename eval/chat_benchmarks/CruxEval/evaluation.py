@@ -70,6 +70,7 @@ def evaluate_generations(
 
     # Load the generations
     sample_jsonl = stream_jsonl_all(input_file)
+    samples = []
 
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
 
@@ -109,8 +110,13 @@ def evaluate_generations(
             args = (task_id, sample, lang, timeout, tmp_dir_, completion_id_)
             future = executor.submit(check_correctness, *args)
             futures.append(future)
+            # from pprint import pprint
+            # print('========================')
+            # pprint(sample)
+            # raise
             completion_id[task_id] += 1
             n_samples += 1
+            samples.append(sample)
 
         if len(completion_id) == len(examples):
             evaluate_pass_at_k = True
@@ -118,9 +124,11 @@ def evaluate_generations(
             evaluate_pass_at_k = False
 
         print("Running test suites...")
+        results_list = []
         for future in tqdm(as_completed(futures), total=len(futures)):
             result = future.result()
             results[result["task_id"]].append((result["completion_id"], result))
+            results_list.append(result)
     # print("all_scores: ", all_scores)
 
     # Calculate pass@k.
@@ -139,4 +147,11 @@ def evaluate_generations(
     else:
         print("Total:", np.sum(total))
         print("Correct:", np.sum(correct))
-    return pass_at_k
+
+    sample_with_results_list = []
+    for sample, result in zip(samples, results_list):
+        sample_with_results = sample.copy()
+        sample_with_results.update(result)
+        sample_with_results_list.append(sample_with_results)
+
+    return pass_at_k, sample_with_results_list

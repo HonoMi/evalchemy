@@ -121,6 +121,12 @@ def extract_answer(generation):
         start = generation.index("[ANSWER]") + len("[ANSWER]")
         end = generation.index("[/ANSWER]")
         return generation[start:end].strip()
+
+    if "<answer>" in generation and "</answer>" in generation:
+        start = generation.index("<answer>") + len("<answer>")
+        end = generation.index("</answer>")
+        return generation[start:end].strip()
+
     return generation
 
 
@@ -234,6 +240,11 @@ class CruxEvalBenchmark(BaseBenchmark):
                     example_with_output = example.copy()
 
                     example_with_output["generation"] = extract_answer(output)
+                    example_with_output["generation_org"] = output
+
+                    # print('\n\n\n========================================')
+                    # print(output)
+                    # print(example_with_output["generation"])
                     example_with_output["task_id"] = example_with_output.pop("id")
 
                     generated_examples.append(example_with_output)
@@ -298,7 +309,8 @@ class CruxEvalBenchmark(BaseBenchmark):
                     self.logger.warning(f"Generated file not found: {temp_file_path}")
                     continue
 
-                result = evaluate_generations(
+                # import pudb; pudb.set_trace()
+                result, examples_with_metrics = evaluate_generations(
                     input_file=temp_file_path,
                     mode=task,
                     examples=examples,
@@ -307,6 +319,7 @@ class CruxEvalBenchmark(BaseBenchmark):
 
                 for metric, value in result.items():
                     evaluation_results[f"{task}_{metric}"] = value
+                evaluation_results[f"{task}_examples"] = examples_with_metrics
 
                 self.logger.info(f"Completed evaluation for {task}")
 

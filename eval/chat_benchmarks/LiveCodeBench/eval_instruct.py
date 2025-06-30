@@ -86,6 +86,7 @@ class LiveCodeBenchBenchmark(BaseBenchmark):
         """
         examples = self.load_questions()
         if self.debug:
+        # if True:
             examples = examples[:10]
 
         all_outputs = []
@@ -95,6 +96,7 @@ class LiveCodeBenchBenchmark(BaseBenchmark):
             seed = [s + i for s in self.seed]
 
             for idx, example in enumerate(examples):
+
                 if example["is_stdin"]:
                     prompt_text = (
                         "Generate an executable Python function generated from the given prompt. The function should take stdin as input and print the output. Simply call the function after the definition."
@@ -257,9 +259,17 @@ class LiveCodeBenchBenchmark(BaseBenchmark):
                 results = [None] * len(examples)
                 for future in as_completed(future_to_example):
                     idx, example = future_to_example[future]
+                    pretty_ng_keys = ['test']
+                    pretty_example = {k: v for k, v in example.items() if k not in pretty_ng_keys}
                     try:
                         result = future.result()
+                        result["example"] = pretty_example  # Add the example to the result
                         results[idx] = (result, example)
+                        # from pprint import pprint
+                        # print('===============================')
+                        # pprint(result)
+                        # print('-------------------------------')
+                        # pprint(example)
                     except Exception as e:
                         self.logger.error(f"Future error for example {idx}: {str(e)}")
                         results[idx] = (
@@ -268,6 +278,7 @@ class LiveCodeBenchBenchmark(BaseBenchmark):
                                 "difficulty": example["difficulty"],
                                 "correctness": False,
                                 "reason": f"Future error: {str(e)}",
+                                "example": pretty_example,
                             },
                             example,
                         )
