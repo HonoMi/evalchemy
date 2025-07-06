@@ -73,7 +73,6 @@ def evaluate_generations(
     samples = []
 
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
-
         futures = []
         completion_id = Counter()
         n_samples = 0

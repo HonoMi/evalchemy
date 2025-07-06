@@ -12,17 +12,21 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 
 from eval.task import BaseBenchmark
+from huggingface_hub import hf_hub_download
 
-from .codeelo_utils import codeelo_run, post_process_code, rating_to_difficulty
+from .livecodebench_utils import lcb_run, map_to_example, post_process_code, translate_private_test_cases
+
+HF_HUB_CACHE = os.environ.get("HF_HUB_CACHE")
+if not HF_HUB_CACHE:
+    print(
+        "WARNING: HF_HUB_CACHE environment variable is not set, using default cache directory ~/.cache/huggingface/hub for LiveCodeBenchv5 benchmark"
+    )
 
 
 def has_code(response):
     pattern = r"```(?:[a-zA-Z]*)\n(.*?)```"
     # Use re.DOTALL to match multiline content inside backticks
     matches = re.findall(pattern, response, re.DOTALL)
-    if not matches:
-        pattern = r"<answer>(.*?)</answer>"
-        matches = re.findall(pattern, response, re.DOTALL)
     return matches
 
 
@@ -33,18 +37,17 @@ def calc_stats(values):
     return mean, stderr
 
 
-HF_HUB_CACHE = os.environ.get("HF_HUB_CACHE")
-if not HF_HUB_CACHE:
-    print(
-        "WARNING: HF_HUB_CACHE environment variable is not set, using default cache directory ~/.cache/huggingface/hub for CodeElo benchmark"
-    )
+
+def filter_by_contest_date(example):
+    target_months = ["2024-08", "2024-09", "2024-10", "2024-11", "2024-12", "2025-01"]
+    return example['contest_date'][:7] in target_months
 
 
-class CodeEloBenchmark(BaseBenchmark):
+class LiveCodeBenchV5OfficialBenchmark(BaseBenchmark):
     """
-    CodeElo Benchmark for evaluating the code reasoning of LLMs.
+    LiveCodeBench v5 - v2 Benchmark for evaluating the math reasoning of LLMs.
 
-    Follows the evaluation logic of CodeElo + what code elo requires.
+    Follows the evaluation logic of hendrycks_math answer extraction.
     """
 
     def __init__(
@@ -56,7 +59,7 @@ class CodeEloBenchmark(BaseBenchmark):
         system_instruction: Optional[str] = None,
     ):
         """
-        Initialize CodeElo benchmark.
+        Initialize LiveCodeBenchV5 benchmark.
 
         Args:
             debug: If set, only evaluate on 2 examples
@@ -69,7 +72,6 @@ class CodeEloBenchmark(BaseBenchmark):
         self.max_new_tokens = max_tokens
         self.seed = seed
         self.n_repeat = 3
-        self.filter_interaction_questions = True
 
     def generate_responses(self, model: LM) -> Dict[str, Any]:
         """
@@ -86,61 +88,23 @@ class CodeEloBenchmark(BaseBenchmark):
         if self.debug:
             examples = examples[:10]
 
-        # TODO - figure out how to support these?
-        if self.filter_interaction_questions:
-            examples = [x for x in examples if not x["interaction"]]
-
         all_outputs = []
-
-        # Taken from the original code / paper
-        def make_html_problem(problem):
-            tests = problem["examples"]
-            test_cases = []
-            for tc in tests:
-                ins = tc[0]
-                outs = tc[1]
-                testtype = "stdin"
-
-                test_cases.append(
-                    {
-                        "input": ins,
-                        "output": outs,
-                        "testtype": testtype,
-                    }
-                )
-
-            title = problem["title"]
-            html_output = "<html><body>"
-            html_output += f"<h1>{title}</h1>"
-            html_output += f'<div>Time limit per test: {problem["time_limit_ms"]} ms</div>'
-            html_output += f"<h2>Description</h2>"
-            html_output += f"<div>{problem['description']}</div>"
-            html_output += f"<h2>Input</h2>"
-            html_output += f"<div>{problem['input']}</div>"
-            html_output += f"<h2>Output</h2>"
-            html_output += f"<div>{problem['output']}</div>"
-            html_output += f"<h2>Example</h2>"
-            html_output += f"<h3>Input</h3>"
-            html_output += f"<div>{test_cases[0]['input']}</div>"
-            html_output += f"<h3>Output</h3>"
-            html_output += f"<div>{test_cases[0]['output']}</div>"
-            if problem["interaction"]:
-                html_output += f"<h2>Interaction</h2>"
-                html_output += f"<div>{problem['interaction']}</div>"
-            if problem["note"]:
-                html_output += f"<h2>Note</h2>"
-                html_output += f"<div>{problem['note']}</div>"
-            html_output += "</body></html>"
-            return html_output
-
-        instruction = """"You are a coding expert. Given a competition-level coding problem, you need to write a Python program to solve it. You may start by outlining your thought process. In the end, please provide the complete code in a code block enclosed with ``` ```. The code should take stdin as input and print the output."""
 
         for i in range(self.n_repeat):
             all_instances = []
             seed = [s + i for s in self.seed]
 
             for idx, example in enumerate(examples):
-                prompt_text = f"{instruction}\n\n{make_html_problem(example)}"
+                if example["is_stdin"]:
+                    prompt_text = (
+                        "Generate an executable Python function generated from the given prompt. The function should take stdin as input and print the output. Simply call the function after the definition."
+                        + example["prompt"]
+                    )
+                else:
+                    prompt_text = (
+                        "Generate an executable Python function generated from the given prompt. Return the function body without invoking it at the final solution."
+                        + example["prompt"]
+                    )
                 messages = [{"role": "user", "content": prompt_text}]
 
                 templated_messages = self._prepare_messages(messages, model)
@@ -163,7 +127,7 @@ class CodeEloBenchmark(BaseBenchmark):
                 all_instances.append(instance)
 
             # Generate model responses
-            self.logger.info("Generating responses for CodeElo...")
+            self.logger.info("Generating responses for LiveCodeBenchV5...")
             outputs = self.compute(model, all_instances)
             all_outputs.append(outputs)
 
@@ -189,7 +153,7 @@ class CodeEloBenchmark(BaseBenchmark):
         :param completion_id: an optional completion ID so we can match
             the results later even if execution finishes asynchronously.
         """
-        result_list = codeelo_run(problem, completion, timeout, is_extracted)
+        result_list = lcb_run(problem, completion, timeout, is_extracted)
         details = [r[0] for r in result_list]
         all_passed = all(details)
 
@@ -204,7 +168,7 @@ class CodeEloBenchmark(BaseBenchmark):
         try:
             response_entry = {
                 "content": example["model_answer"],
-                "difficulty": rating_to_difficulty(example["rating"]),
+                "difficulty": example["difficulty"],
                 "correctness": None,
                 "reason": None,
             }
@@ -221,24 +185,24 @@ class CodeEloBenchmark(BaseBenchmark):
                 problem_to_check = copy.deepcopy(example)
 
                 # Add debugging
-                self.logger.debug(f"Evaluating problem...")
+                self.logger.debug(f"Evaluating {example['difficulty']} problem...")
 
                 # Add timeout handling
                 curr_res = self.check_correctness(
                     problem=problem_to_check,
                     completion=post_process_code(last_code),
-                    timeout=problem_to_check["time_limit_ms"] / 1000,
-                    is_extracted=False,
+                    timeout=6,
+                    is_extracted=not problem_to_check["is_stdin"],
                 )
 
                 # Log the result
-                self.logger.debug(f"Result: {curr_res}")
+                self.logger.debug(f"Result for {example['difficulty']}: {curr_res}")
 
                 response_entry["correctness"] = curr_res
                 response_entry["reason"] = "" if curr_res else "Code is incorrect."
 
             except Exception as e:
-                self.logger.error(f"Error evaluating example: {str(e)}")
+                self.logger.error(f"Error evaluating {example['difficulty']} example: {str(e)}")
                 response_entry["correctness"] = False
                 response_entry["reason"] = f"Evaluation error: {str(e)}"
 
@@ -248,7 +212,7 @@ class CodeEloBenchmark(BaseBenchmark):
             self.logger.error(f"Outer error in evaluate_single_example: {str(outer_e)}")
             return {
                 "content": example.get("model_answer"),
-                "difficulty": rating_to_difficulty(example.get("rating")),
+                "difficulty": example.get("difficulty"),
                 "correctness": False,
                 "reason": f"Critical error: {str(outer_e)}",
             }
@@ -301,7 +265,7 @@ class CodeEloBenchmark(BaseBenchmark):
                         results[idx] = (
                             {
                                 "content": example["model_answer"],
-                                "difficulty": rating_to_difficulty(example["rating"]),
+                                "difficulty": example["difficulty"],
                                 "correctness": False,
                                 "reason": f"Future error: {str(e)}",
                             },
@@ -386,8 +350,20 @@ class CodeEloBenchmark(BaseBenchmark):
         return final_metrics
 
     def load_questions(self) -> Dataset:
-        """Load CodeElo questions from source."""
-        self.logger.info("Loading CodeElo questions from source and converting to dataset...")
-        ds = load_dataset("Qwen/CodeElo", cache_dir=HF_HUB_CACHE)["test"].to_list()
-        ds = [{**x, "difficulty": rating_to_difficulty(x["rating"])} for x in ds]
+        """Load LiveCodeBenchV5 questions from source."""
+        self.logger.info("Loading LiveCodeBenchV5 questions from source and converting to dataset...")
+        cpu_count = os.cpu_count()
+        lcb_codegen = load_dataset("livecodebench/code_generation_lite", version_tag="release_v5", cache_dir="./")['test']
+        ds = lcb_codegen.filter(filter_by_contest_date)
+        processed_shards = []
+        num_shards = 4
+        for i in range(num_shards):
+            shard = ds.shard(num_shards=num_shards, index=i)
+            shard = shard.map(
+                lambda example: {"private_test_cases": translate_private_test_cases(example["private_test_cases"])},
+                num_proc=cpu_count,
+            )
+            shard = shard.map(map_to_example, remove_columns=ds.column_names)
+            processed_shards.append(shard)
+        ds = concatenate_datasets(processed_shards)
         return ds

@@ -34,11 +34,11 @@ def has_code(response):
 
 # Calculate mean and standard error for all metrics
 def calc_stats(values):
-    arr    = np.asarray(values, dtype=float)
-    mask   = ~np.isnan(arr)
-    if mask.sum() == 0:          # all NaNs → undefined; return 0,0
+    arr = np.asarray(values, dtype=float)
+    mask = ~np.isnan(arr)
+    if mask.sum() == 0:  # all NaNs → undefined; return 0,0
         return 0.0, 0.0
-    mean   = arr[mask].mean()
+    mean = arr[mask].mean()
     stderr = np.std(arr[mask], ddof=1) / np.sqrt(mask.sum())
     return mean, stderr
 
@@ -54,7 +54,7 @@ class LiveCodeBenchBenchmark(BaseBenchmark):
         self,
         debug: bool = False,
         seed: List[int] = [0, 1234, 1234, 1234],
-        max_tokens: Optional[int] = None,
+        max_tokens: int = 32768,
         logger: Optional[logging.Logger] = None,
         system_instruction: Optional[str] = None,
     ):
@@ -69,7 +69,7 @@ class LiveCodeBenchBenchmark(BaseBenchmark):
         """
         super().__init__(logger=logger, system_instruction=system_instruction)
         self.debug = debug
-        self.max_new_tokens = max_tokens if max_tokens is not None else 32768 # set higher to avoid truncation for reasoning models
+        self.max_new_tokens = max_tokens
         self.seed = seed
         self.n_repeat = 6
 
