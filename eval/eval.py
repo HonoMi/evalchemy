@@ -33,6 +33,7 @@ from eval.task import TaskManager as InstructTaskManager
 
 
 _BIT_CAP = 15_000
+logger = logging.getLogger(__name__)
 
 
 def handle_non_serializable_extended(o):
@@ -323,6 +324,9 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
     if not args:
         parser = setup_custom_parser()
         args = parse_eval_args(parser)
+
+    import socket
+    logger.info('hostname: %s', socket.gethostname())
 
     if args.config is not None:
         # This overwrites `--tasks` and `--batch_size`

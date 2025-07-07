@@ -36,7 +36,6 @@ def truncate_prompt(
     truncated_tokens = tokens[-budget:]
     truncated_text = tokenizer.decode(truncated_tokens, skip_special_tokens=True)
     truncated_text_encoded_tokens = tokenizer.encode(truncated_text, add_special_tokens=False)
-    print(f'TRUNCATED: {len(tokenizer.encode(truncated_text, add_special_tokens=False))}')
     logger.info(f'The pronpt is truncated from {len(tokens)} to {len(truncated_text_encoded_tokens)}'
                 f' due to the max token limit {max_model_len} ')
     return truncated_text
@@ -175,7 +174,9 @@ class BaseBenchmark(ABC):
             return results
 
     def _get_max_model_len(self, model) -> Optional[int]:
-        if hasattr(model.model.llm_engine, 'model_config')\
+        if os.environ.get('EVALCHEMY_PROMPT_MAX_LEN', None) is not None:
+            return int(os.environ.get('EVALCHEMY_PROMPT_MAX_LEN', None))
+        elif hasattr(model.model.llm_engine, 'model_config')\
                 and hasattr(model.model.llm_engine, 'model_config')\
                 and hasattr(model.model.llm_engine.model_config, 'hf_config')\
                 and hasattr(model.model.llm_engine.model_config.hf_config, 'max_position_embeddings'):

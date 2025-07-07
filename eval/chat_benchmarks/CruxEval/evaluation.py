@@ -66,7 +66,7 @@ def evaluate_generations(
 ):
     # Load the samples
     references = [(doc["code"], doc["input"], doc["output"]) for doc in examples]
-    n_workers = 8
+    n_workers = int(os.environ.get('EVALCHEMY_LIVECODEBENCH_MAX_WORKERS', 8))
 
     # Load the generations
     sample_jsonl = stream_jsonl_all(input_file)
