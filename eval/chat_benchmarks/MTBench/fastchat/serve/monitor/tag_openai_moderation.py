@@ -50,7 +50,7 @@ if __name__ == "__main__":
     if args.first_n:
         battles = battles[: args.first_n]
 
-    with ThreadPoolExecutor(args.parallel) as executor:
+    with ThreadPoolExecutor(int(os.environ.get('EVALCHEMY_MAX_THREADS', args.parallel))) as executor:
         for line in tqdm(executor.map(tag_openai_moderation, battles), total=len(battles)):
             pass
 

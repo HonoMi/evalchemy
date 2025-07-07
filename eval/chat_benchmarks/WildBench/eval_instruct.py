@@ -357,7 +357,7 @@ class WildBenchBenchmark(BaseBenchmark):
 
             results = []
             # Use ThreadPoolExecutor since API calls are I/O bound
-            with ThreadPoolExecutor(max_workers=self.config.api_parallel) as executor:
+            with ThreadPoolExecutor(max_workers=int(os.environ.get('EVALCHEMY_MAX_THREADS', self.config.api_parallel))) as executor:
                 future_to_line = {executor.submit(process_line, line): line for line in lines}
                 for future in as_completed(future_to_line):
                     try:

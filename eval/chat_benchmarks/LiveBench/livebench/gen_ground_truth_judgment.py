@@ -394,7 +394,7 @@ if __name__ == "__main__":
                 answer_dir = f"data/{task_full_name}/model_answer/"  # expected location of model answers
 
                 gen_judgments(
-                    parallel=args.parallel,
+                    parallel=int(os.environ.get('EVALCHEMY_MAX_THREADS', args.parallel)),
                     questions=questions,
                     output_file=output_file,
                     answer_dir=answer_dir,

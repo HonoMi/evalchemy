@@ -77,7 +77,7 @@ def anthropic_completions(
         if num_procs == 1:
             responses = [_anthropic_completion_helper(inp, **kwargs) for inp in tqdm.tqdm(inputs, desc="prompts")]
         else:
-            with ThreadPoolExecutor(max_workers=num_procs) as p:
+            with ThreadPoolExecutor(max_workers=int(os.environ.get('EVALCHEMY_MAX_THREADS', num_procs))) as p:
                 partial_completion_helper = functools.partial(_anthropic_completion_helper, **kwargs)
                 responses = list(
                     tqdm.tqdm(

@@ -247,7 +247,7 @@ class LiveCodeBenchV5OfficialBenchmark(BaseBenchmark):
         for repeat_idx, examples in examples_by_repeat.items():
             # Use ThreadPoolExecutor with limited concurrency
             results = []
-            with ThreadPoolExecutor(max_workers=32) as executor:
+            with ThreadPoolExecutor(max_workers=int(os.environ.get('EVALCHEMY_MAX_THREADS', 32))) as executor:
                 future_to_example = {}
                 for i, example in enumerate(examples):
                     future = executor.submit(self.evaluate_single_example, example)

@@ -294,7 +294,7 @@ class MTBenchBenchmark(BaseBenchmark):
             for match in tqdm(matches):
                 play_a_match_func(match, output_file=output_file)
         else:
-            with ThreadPoolExecutor(self.config.parallel) as executor:
+            with ThreadPoolExecutor(int(os.environ.get('EVALCHEMY_MAX_THREADS', self.config.parallel))) as executor:
                 list(
                     tqdm(
                         executor.map(lambda m: play_a_match_func(m, output_file=output_file), matches),

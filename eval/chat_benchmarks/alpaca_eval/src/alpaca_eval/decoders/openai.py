@@ -148,7 +148,7 @@ def openai_completions(
                 for inp in tqdm.tqdm(inputs, desc="prompt_batches", total=len(prompts))
             ]
         else:
-            with ThreadPoolExecutor(max_workers=num_procs) as p:
+            with ThreadPoolExecutor(max_workers=int(os.environ.get('EVALCHEMY_MAX_THREADS', num_procs))) as p:
                 partial_completion_helper = functools.partial(_openai_completion_helper, **kwargs)
                 completions = list(
                     tqdm.tqdm(

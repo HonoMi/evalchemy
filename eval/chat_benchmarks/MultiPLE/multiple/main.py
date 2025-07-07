@@ -141,7 +141,7 @@ def main():
             p.unlink()
 
     if not args.max_workers:
-        args.max_workers = cpu_count() - 1 if cpu_count() > 1 else 1
+        args.max_workers = int(os.environ.get('EVALCHEMY_MAX_THREADS', cpu_count() - 1 if cpu_count() > 1 else 1))
 
     start_t = time.time()
 

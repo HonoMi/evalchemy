@@ -127,7 +127,7 @@ class ChatGPTJudgeCloseendFreeform:
     def annotate_parallel(self, tasks):
         print(f"Parsing in parallel, in total {self.args.api_parallel_num} threads.")
         results = []
-        with ThreadPoolExecutor(self.args.api_parallel_num) as executor:
+        with ThreadPoolExecutor(int(os.environ.get('EVALCHEMY_MAX_THREADS', self.args.api_parallel_num))) as executor:
             for entry in tqdm(executor.map(self.annotate_p, tasks), total=len(tasks)):
                 results.append(entry)
         if None in results:

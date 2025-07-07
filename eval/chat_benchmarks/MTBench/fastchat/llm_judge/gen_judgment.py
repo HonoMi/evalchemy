@@ -294,6 +294,6 @@ if __name__ == "__main__":
         np.random.seed(0)
         np.random.shuffle(matches)
 
-        with ThreadPoolExecutor(args.parallel) as executor:
+        with ThreadPoolExecutor(int(os.environ.get('EVALCHEMY_MAX_THREADS', args.parallel))) as executor:
             for match in tqdm(executor.map(play_a_match_wrapper, matches), total=len(matches)):
                 pass

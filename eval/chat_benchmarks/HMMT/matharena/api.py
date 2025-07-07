@@ -216,7 +216,7 @@ class APIQuery:
                 }
                 yield idx, result["output"], detailed_cost
         else:
-            with ThreadPoolExecutor(max_workers=self.concurrent_requests) as executor:
+            with ThreadPoolExecutor(max_workers=int(os.environ.get('EVALCHEMY_MAX_THREADS', self.concurrent_requests))) as executor:
                 future_to_index = {
                     executor.submit(self.run_query_with_retry, query): i for i, query in enumerate(queries_actual)
                 }

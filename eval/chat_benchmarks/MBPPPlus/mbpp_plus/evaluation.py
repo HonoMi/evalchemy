@@ -206,7 +206,7 @@ def stream_jsonl_all(filename: str) -> Iterable[Dict]:
 def evaluate_functional_correctness(
     input_file: str = None,
     tmp_dir: str = "./",
-    n_workers: int = 32,
+    n_workers: int = int(os.environ.get("AEVALCHEMY_MAX_THREADS", 32)),
     timeout: float = 10.0,
     problem_file: str = "../data/humaneval_python.jsonl.gz",
     out_dir: str = None,

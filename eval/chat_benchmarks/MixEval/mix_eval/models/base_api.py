@@ -2,6 +2,7 @@ import json
 from tqdm import tqdm
 import random
 import time
+import os
 
 from concurrent.futures import ThreadPoolExecutor
 from openai._exceptions import RateLimitError
@@ -88,7 +89,7 @@ class APIModelBase:
     def annotate_parallel(self, tasks):
         print(f"Generating response in parallel, in total {len(tasks)} threads.")
         results = []
-        with ThreadPoolExecutor(len(tasks)) as executor:
+        with ThreadPoolExecutor(int(os.environ.get('EVALCHEMY_MAX_THREADS', len(tasks)))) as executor:
             for entry in tqdm(executor.map(self.annotate_p, tasks), total=len(tasks)):
                 results.append(entry)
         return results
