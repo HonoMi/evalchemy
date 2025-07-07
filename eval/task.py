@@ -14,6 +14,33 @@ import torch
 import torch.distributed as dist
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
+from transformers import PreTrainedTokenizerBase
+
+
+logger = logging.getLogger(__name__)
+
+
+def truncate_prompt(
+    text: str,
+    tokenizer: PreTrainedTokenizerBase,
+    max_model_len: int,
+) -> str:
+    budget = max_model_len
+    if budget <= 0:
+        raise NotImplementedError()
+
+    tokens = tokenizer.encode(text, add_special_tokens=False)
+    if len(tokens) <= budget:
+        return text
+
+    truncated_tokens = tokens[-budget:]
+    truncated_text = tokenizer.decode(truncated_tokens, skip_special_tokens=True)
+    truncated_text_encoded_tokens = tokenizer.encode(truncated_text, add_special_tokens=False)
+    print(f'TRUNCATED: {len(tokenizer.encode(truncated_text, add_special_tokens=False))}')
+    logger.info(f'The pronpt is truncated from {len(tokens)} to {len(truncated_text_encoded_tokens)}'
+                f' due to the max token limit {max_model_len} ')
+    return truncated_text
+
 
 
 class BaseBenchmark(ABC):
@@ -101,6 +128,35 @@ class BaseBenchmark(ABC):
         else:
             prompts = inputs
 
+        max_model_len = self._get_max_model_len(model)
+        if max_model_len is not None:
+            tokenizer = model.tokenizer
+            truncated_prompts = []
+            for prompt in prompts:
+                prompt_text, gen_args = prompt.args
+                # max_new_tokens = gen_args.get('max_gen_toks', gen_args.get('max_new_tokens', 2048))
+
+                truncated_prompt_text = truncate_prompt(
+                    prompt_text,
+                    tokenizer,
+                    max_model_len,
+                )
+
+                truncated_prompt = Instance(
+                    prompt.request_type,
+                    prompt.doc,
+                    (truncated_prompt_text, gen_args),
+                    prompt.idx,
+                    prompt.metadata,
+                    prompt.resps,
+                    prompt.filtered_resps,
+                    prompt.task_name,
+                    prompt.doc_id,
+                    prompt.repeats,
+                )
+                truncated_prompts.append(truncated_prompt)
+            prompts = truncated_prompts
+
         results = model.generate_until(prompts)
         if model.world_size > 1:
             all_results = [None for _ in range(model.world_size)]
@@ -117,6 +173,15 @@ class BaseBenchmark(ABC):
             return merged
         else:
             return results
+
+    def _get_max_model_len(self, model) -> Optional[int]:
+        if hasattr(model.model.llm_engine, 'model_config')\
+                and hasattr(model.model.llm_engine, 'model_config')\
+                and hasattr(model.model.llm_engine.model_config, 'hf_config')\
+                and hasattr(model.model.llm_engine.model_config.hf_config, 'max_position_embeddings'):
+            return model.model.llm_engine.model_config.hf_config.max_position_embeddings
+        else:
+            return None
 
     @abstractmethod
     def generate_responses(self, model: LM) -> Dict[str, Any]:
