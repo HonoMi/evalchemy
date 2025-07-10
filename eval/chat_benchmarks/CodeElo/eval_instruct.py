@@ -10,20 +10,12 @@ import numpy as np
 from datasets import Dataset, concatenate_datasets, load_dataset
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
+from lm_eval.tasks.hendrycks_math.utils import is_equiv, last_boxed_only_string, remove_boxed
 
 from eval.task import BaseBenchmark
+from eval.chat_benchmarks.utils import has_code
 
 from .codeelo_utils import codeelo_run, post_process_code, rating_to_difficulty
-
-
-def has_code(response):
-    pattern = r"```(?:[a-zA-Z]*)\n(.*?)```"
-    # Use re.DOTALL to match multiline content inside backticks
-    matches = re.findall(pattern, response, re.DOTALL)
-    if not matches:
-        pattern = r"<answer>(.*?)</answer>"
-        matches = re.findall(pattern, response, re.DOTALL)
-    return matches
 
 
 # Calculate mean and standard error for all metrics
@@ -216,31 +208,41 @@ class CodeEloBenchmark(BaseBenchmark):
                 response_entry["reason"] = "Does not contain code component."
                 return response_entry
 
-            try:
-                last_code = code_filter_result[-1]
-                problem_to_check = copy.deepcopy(example)
+            if os.environ.get('EVALCHEMY_EVALUATE_ALL_CODE_BLOCKS', '0') == '1':
+                last_codes = code_filter_result
+            else:
+                last_codes = code_filter_result[-1]
 
-                # Add debugging
-                self.logger.debug(f"Evaluating problem...")
+            curr_res = False
+            for last_code in last_codes:
+                try:
+                    # last_code = code_filter_result[-1]
+                    problem_to_check = copy.deepcopy(example)
 
-                # Add timeout handling
-                curr_res = self.check_correctness(
-                    problem=problem_to_check,
-                    completion=post_process_code(last_code),
-                    timeout=problem_to_check["time_limit_ms"] / 1000,
-                    is_extracted=False,
-                )
+                    # Add debugging
+                    self.logger.debug(f"Evaluating problem...")
 
-                # Log the result
-                self.logger.debug(f"Result: {curr_res}")
+                    # Add timeout handling
+                    curr_res = self.check_correctness(
+                        problem=problem_to_check,
+                        completion=post_process_code(last_code),
+                        timeout=problem_to_check["time_limit_ms"] / 1000,
+                        is_extracted=False,
+                    )
 
-                response_entry["correctness"] = curr_res
-                response_entry["reason"] = "" if curr_res else "Code is incorrect."
+                    # Log the result
+                    self.logger.debug(f"Result: {curr_res}")
 
-            except Exception as e:
-                self.logger.error(f"Error evaluating example: {str(e)}")
-                response_entry["correctness"] = False
-                response_entry["reason"] = f"Evaluation error: {str(e)}"
+                    response_entry["correctness"] = curr_res
+                    response_entry["reason"] = "" if curr_res else "Code is incorrect."
+
+                except Exception as e:
+                    self.logger.error(f"Error evaluating example: {str(e)}")
+                    response_entry["correctness"] = False
+                    response_entry["reason"] = f"Evaluation error: {str(e)}"
+
+                if curr_res:
+                    return response_entry
 
             return response_entry
 

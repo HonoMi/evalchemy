@@ -12,6 +12,7 @@ import re
 import itertools
 
 from eval.task import BaseBenchmark
+from eval.chat_benchmarks.utils import has_code
 
 from .evaluation import evaluate_generations
 
@@ -117,17 +118,7 @@ assert f(??) == {output}
 
 
 def extract_answer(generation):
-    if "[ANSWER]" in generation and "[/ANSWER]" in generation:
-        start = generation.index("[ANSWER]") + len("[ANSWER]")
-        end = generation.index("[/ANSWER]")
-        return generation[start:end].strip()
-
-    if "<answer>" in generation and "</answer>" in generation:
-        start = generation.index("<answer>") + len("<answer>")
-        end = generation.index("</answer>")
-        return generation[start:end].strip()
-
-    return generation
+    return has_code(generation) or generation
 
 
 class CruxEvalBenchmark(BaseBenchmark):
