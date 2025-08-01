@@ -31,6 +31,8 @@ from eval.constants import LIST_OPENAI_MODELS
 from eval.eval_tracker import DCEvaluationTracker
 from eval.task import TaskManager as InstructTaskManager
 
+from chat_template_lib import get_hf_chat_template, patch_hf_apply_chat_template
+
 
 _BIT_CAP = 15_000
 logger = logging.getLogger(__name__)
@@ -132,6 +134,12 @@ def setup_custom_parser():
         action="store_true",
         help="Run evalutaions in debug mode on a few examples",
     )
+    parser.add_argument(
+        "--custom_chat_template_name",
+        type=str,
+        default=None,
+    )
+
     return parser
 
 
@@ -324,6 +332,9 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
     if not args:
         parser = setup_custom_parser()
         args = parse_eval_args(parser)
+
+    if args.custom_chat_template_name is not None:
+        patch_hf_apply_chat_template(get_hf_chat_template(args.custom_chat_template_name))
 
     import socket
     logger.info('hostname: %s', socket.gethostname())

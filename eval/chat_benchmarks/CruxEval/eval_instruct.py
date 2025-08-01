@@ -118,7 +118,21 @@ assert f(??) == {output}
 
 
 def extract_answer(generation):
-    return has_code(generation) or generation
+    # if "[ANSWER]" in generation and "[/ANSWER]" in generation:
+    #     start = generation.index("[ANSWER]") + len("[ANSWER]")
+    #     end = generation.index("[/ANSWER]")
+    #     return generation[start:end].strip()
+
+    # if "<answer>" in generation and "</answer>" in generation:
+    #     start = generation.index("<answer>") + len("<answer>")
+    #     end = generation.index("</answer>")
+    #     return generation[start:end].strip()
+
+    codes = list(has_code(generation))
+    if len(codes) > 0:
+        return codes[-1]
+    else:
+        return generation
 
 
 class CruxEvalBenchmark(BaseBenchmark):

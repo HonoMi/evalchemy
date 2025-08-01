@@ -13,7 +13,7 @@ def has_code(response):
 
     if not matches:
         # CruxEval
-        pattern = r"<ANSWER>(.*?)</ANSWER>"
+        pattern = r"\[ANSWER\](.*?)\[/ANSWER\]"
         matches = re.findall(pattern, response, re.DOTALL)
 
     if not matches:

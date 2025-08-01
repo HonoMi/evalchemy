@@ -3,12 +3,16 @@ import logging
 import numpy as np
 import re
 from typing import Any, Dict, List, Optional
+import os
 
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from lm_eval.tasks.hendrycks_math.utils import is_equiv
 
 from eval.task import BaseBenchmark
+
+
+_SHOULD_EVALUATE_SELECTED_IDS = os.environ.get("EVALCHEMY_AIW_USE_ALL_SAMPLES", "0") != "1"
 
 
 class AIWBenchmark(BaseBenchmark):
@@ -26,7 +30,7 @@ class AIWBenchmark(BaseBenchmark):
         max_tokens: int = 32768,
         logger: Optional[logging.Logger] = None,
         system_instruction: Optional[str] = None,
-        n_trials: int = 100,  # Run 100 trials
+        n_trials: int = 100 if _SHOULD_EVALUATE_SELECTED_IDS else 5,
     ):
         """
         Initialize AIW benchmark.
@@ -58,7 +62,8 @@ class AIWBenchmark(BaseBenchmark):
         examples = self.load_questions()
 
         # Filter examples based on the target IDs
-        examples = [ex for ex in examples if ex["id"] in self.TARGET_IDS]
+        if _SHOULD_EVALUATE_SELECTED_IDS:
+            examples = [ex for ex in examples if ex["id"] in self.TARGET_IDS]
 
         if not examples:
             self.logger.warning("No matching examples found for the given IDs.")
@@ -112,6 +117,12 @@ class AIWBenchmark(BaseBenchmark):
         """Load AIW questions from the data file."""
         with open(self.data_file, "r") as f:
             questions = json.load(f)
+
+        for question in questions:
+            if isinstance(question['prompt'], list):
+                question['prompt'] = " ".join(question['prompt'])
+                logging.info(f"Converted prompt from list to string for question ID {question['id']}")
+
         self.logger.info(f"Loaded {len(questions)} questions from {self.data_file}")
         return questions
 
@@ -138,7 +149,8 @@ class AIWBenchmark(BaseBenchmark):
         examples = results["examples"]
 
         # Filter only the target IDs
-        examples = [ex for ex in examples if ex["id"] in self.TARGET_IDS]
+        if _SHOULD_EVALUATE_SELECTED_IDS:
+            examples = [ex for ex in examples if ex["id"] in self.TARGET_IDS]
         if not examples:
             self.logger.warning("No matching examples found for the given IDs.")
             return None

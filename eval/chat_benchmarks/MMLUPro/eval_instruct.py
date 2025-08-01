@@ -1,5 +1,6 @@
 import re
 import random
+import os
 import time
 import logging
 from collections import defaultdict
@@ -102,6 +103,7 @@ class MMLUProBenchmark(BaseBenchmark):
         logger: Optional[logging.Logger] = None,
         system_instruction: Optional[str] = None,
         seed: List[int] = [0, 1234, 1234, 1234],
+        max_examples = int(os.getenv("EVALCHEMY_MMLU_PRO_MAX_EXAMPLES")) if os.getenv("EVALCHEMY_MMLU_PRO_MAX_EXAMPLES") is not None else None,
     ):
         super().__init__(logger=logger, system_instruction=system_instruction)
         self.dataset_name = "TIGER-Lab/MMLU-Pro"
@@ -110,11 +112,18 @@ class MMLUProBenchmark(BaseBenchmark):
         # self.max_new_tokens = max_tokens
         self.max_new_tokens = max_tokens if max_tokens is not None else int(max_model_length / 2)
         self.debug = debug
-        self.seed = seed
 
         ds = load_dataset(self.dataset_name)
-        self.test_examples = preprocess(ds["test"])
+        if max_examples is not None:
+            # Limit test sample size if specified
+            test_ds = ds["test"].shuffle(seed=seed[0]).select(range(max_examples))
+        else:   
+            test_ds = ds["test"]
+        
+        self.test_examples = preprocess(test_ds)
         self.val_examples = preprocess(ds["validation"])
+
+        self.seed = seed
 
         # prepare tokenizer for dynamic prompt length checks
         # model name will be set later in generate_responses

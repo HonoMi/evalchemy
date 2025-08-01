@@ -25,7 +25,7 @@ def truncate_prompt(
     tokenizer: PreTrainedTokenizerBase,
     max_model_len: int,
 ) -> str:
-    budget = max_model_len
+    budget = max_model_len - 10  # as sometimes results are a bit longer than the max_model_len
     if budget <= 0:
         raise NotImplementedError()
 
@@ -36,8 +36,8 @@ def truncate_prompt(
     truncated_tokens = tokens[-budget:]
     truncated_text = tokenizer.decode(truncated_tokens, skip_special_tokens=True)
     truncated_text_encoded_tokens = tokenizer.encode(truncated_text, add_special_tokens=False)
-    logger.info(f'The pronpt is truncated from {len(tokens)} to {len(truncated_text_encoded_tokens)}'
-                f' due to the max token limit {max_model_len} ')
+    logger.warning(f'The pronpt is truncated from {len(tokens)} to {len(truncated_text_encoded_tokens)}'
+                   f' due to the max token limit {max_model_len} ')
     return truncated_text
 
 
@@ -102,7 +102,10 @@ class BaseBenchmark(ABC):
             messages.insert(0, {"role": "system", "content": self.system_instruction})
 
         if model is not None:
-            msg = model.apply_chat_template(messages)
+            try:
+                msg = model.apply_chat_template(messages)
+            except Exception as e:
+                import pudb; pudb.set_trace()
             if self._prompt_think_tag:
                 msg = msg + "\n<think>"
             # from pprint import pprint
@@ -135,11 +138,14 @@ class BaseBenchmark(ABC):
                 prompt_text, gen_args = prompt.args
                 # max_new_tokens = gen_args.get('max_gen_toks', gen_args.get('max_new_tokens', 2048))
 
-                truncated_prompt_text = truncate_prompt(
-                    prompt_text,
-                    tokenizer,
-                    max_model_len,
-                )
+                try:
+                    truncated_prompt_text = truncate_prompt(
+                        prompt_text,
+                        tokenizer,
+                        max_model_len,
+                    )
+                except Exception as e:
+                    import pudb; pudb.set_trace()
 
                 truncated_prompt = Instance(
                     prompt.request_type,
