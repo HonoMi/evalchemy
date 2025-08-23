@@ -48,6 +48,7 @@ class BaseBenchmark(ABC):
     def __init__(self, logger: Optional[logging.Logger] = None, system_instruction: Optional[str] = None):
         self.logger = logger or logging.getLogger(self.__class__.__name__)
         self.system_instruction = system_instruction
+        self.extra_user_instruction = os.getenv("EVALCHEMY_EXTRA_USER_INSTRUCTION", "")
         self._prompt_think_tag = bool(int(os.getenv("EVALCHEMY_PROMPT_THINK_TAG", 0)))
 
 
@@ -100,6 +101,11 @@ class BaseBenchmark(ABC):
         """
         if self.system_instruction:
             messages.insert(0, {"role": "system", "content": self.system_instruction})
+        if self.extra_user_instruction:
+            for message in messages:
+                if message["role"] == "user":
+                    message["content"] = message["content"] + " " + self.extra_user_instruction
+                    break
 
         if model is not None:
             try:
