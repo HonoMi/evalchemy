@@ -45,7 +45,8 @@ class AIME25Benchmark(BaseBenchmark):
         self.debug = debug
         self.max_new_tokens = max_tokens if max_tokens is not None else 32768
         self.seed = seed
-        self.n_repeat = 10
+        # self.n_repeat = 10
+        self.n_repeat = 1
 
     def generate_responses(self, model: LM) -> Dict[str, Any]:
         """

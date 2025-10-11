@@ -38,6 +38,38 @@ _BIT_CAP = 15_000
 logger = logging.getLogger(__name__)
 
 
+from lm_eval.api.instance import Instance
+
+_SAMPLING_INFO_ONCE = False
+
+def _instance_post_init_(self) -> None:
+    global _SAMPLING_INFO_ONCE
+    is_sampling_params_injected = False
+
+    for key, value in os.environ.items():
+
+        if key.startswith('EVALCHEMY_SAMPLING_'):
+            is_sampling_params_injected = True
+            genkey = key[len('EVALCHEMY_SAMPLING_'):].lower()
+            try:
+                val = json.loads(value)
+            except Exception:
+                val = value
+            if isinstance(self.arguments[1], dict):
+                self.arguments[1][genkey] = val
+                if not _SAMPLING_INFO_ONCE:
+                    logger.info(f"Setting Instance.gen_kwargs['{genkey}'] from environment variable {key}: {val}")
+            else:
+                if not _SAMPLING_INFO_ONCE:
+                    logger.info(f"Cannot set Instance.gen_kwargs['{genkey}'] because arguments[1] is not a dict")
+
+    if is_sampling_params_injected:
+        _SAMPLING_INFO_ONCE = True
+
+
+Instance.__post_init__ = _instance_post_init_
+
+
 def handle_non_serializable_extended(o):
     """
     Delegates to the stock helper, but for gigantic SymPy Integer /
