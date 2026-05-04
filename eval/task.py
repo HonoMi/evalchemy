@@ -108,10 +108,10 @@ class BaseBenchmark(ABC):
                     break
 
         if model is not None:
-            try:
+            if model.tokenizer.chat_template is not None:
                 msg = model.apply_chat_template(messages)
-            except Exception as e:
-                import pudb; pudb.set_trace()
+            else:
+                msg = ' '.join([m['content'] for m in messages])
             if self._prompt_think_tag:
                 msg = msg + "\n<think>"
             # from pprint import pprint
