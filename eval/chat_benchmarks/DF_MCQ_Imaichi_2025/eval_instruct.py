@@ -39,7 +39,7 @@ _FULLWIDTH_TO_ASCII = str.maketrans(
 
 class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
     """
-    Local MCQ benchmark backed by MCQ_500.json.
+    Local MCQ benchmark backed by 2025_Imaichi_MCQ.json.
     """
 
     def __init__(
@@ -52,7 +52,7 @@ class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
         system_instruction: Optional[str] = None,
     ):
         super().__init__(logger=logger, system_instruction=system_instruction)
-        self.data_file = data_file or str(Path(__file__).resolve().parent / "data" / "MCQ_500.json")
+        self.data_file = data_file or str(Path(__file__).resolve().parent / "data" / "2025_Imaichi_MCQ.json")
         self.debug = debug
         self.seed = seed
         self.max_new_tokens = min(max_tokens or 4096, 4096)
