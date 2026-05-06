@@ -37,10 +37,8 @@ _FULLWIDTH_TO_ASCII = str.maketrans(
 )
 
 
-class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
-    """
-    Local MCQ benchmark backed by MCQ_500.json.
-    """
+class DF_MCQBenchmark(BaseBenchmark):
+    """Local MCQ benchmark backed by a user-specified JSON file."""
 
     def __init__(
         self,
@@ -52,7 +50,7 @@ class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
         system_instruction: Optional[str] = None,
     ):
         super().__init__(logger=logger, system_instruction=system_instruction)
-        self.data_file = data_file or str(Path(__file__).resolve().parent / "data" / "MCQ_500.json")
+        self.data_file = str(Path(data_file).expanduser()) if data_file else None
         self.debug = debug
         self.seed = seed
         self.max_new_tokens = min(max_tokens or 4096, 4096)
@@ -94,7 +92,7 @@ class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
             }
             instances.append(instance)
 
-        self.logger.info("Generating responses for DF_MCQ_Imaichi_2025...")
+        self.logger.info("Generating responses for DF_MCQ...")
         outputs = self.compute(model, instances)
 
         if model.rank != 0:
@@ -157,14 +155,36 @@ class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
         return results
 
     def load_questions(self) -> List[Dict[str, Any]]:
-        with open(self.data_file, "r") as f:
+        if not self.data_file:
+            raise ValueError(
+                "DF_MCQ requires a data file. Pass --df_mcq_data_file or set tasks[].data_file in the YAML config."
+            )
+
+        with open(self.data_file, "r", encoding="utf-8") as f:
             questions = json.load(f)
+
+        if isinstance(questions, dict):
+            if "questions" in questions:
+                questions = questions["questions"]
+            elif "data" in questions:
+                questions = questions["data"]
+            else:
+                raise ValueError(f"Unsupported DF_MCQ data format in {self.data_file}: top-level dict keys {list(questions)}")
+
+        if not isinstance(questions, list):
+            raise ValueError(f"Unsupported DF_MCQ data format in {self.data_file}: expected a list of questions")
 
         if self.debug:
             questions = questions[:2]
 
         normalized_questions = []
-        for idx, question in enumerate(questions):
+        for idx, raw_question in enumerate(questions):
+            question = raw_question.get("mcq", raw_question) if isinstance(raw_question, dict) else raw_question
+            if not isinstance(question, dict):
+                raise ValueError(
+                    f"Unsupported DF_MCQ question format at index {idx} in {self.data_file}: expected an object"
+                )
+
             choices = [
                 {
                     "option": str(choice["option"]).strip().upper(),
@@ -174,7 +194,9 @@ class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
             ]
             normalized_questions.append(
                 {
-                    "id": idx,
+                    "id": raw_question.get("question_index", question.get("id", idx))
+                    if isinstance(raw_question, dict)
+                    else idx,
                     "question": str(question["question"]).strip(),
                     "choices": choices,
                     "answer": str(question["answer"]).strip().upper(),

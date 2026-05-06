@@ -162,6 +162,12 @@ def setup_custom_parser():
         help="Path to config yaml. Overwrites --batch_size, --tasks, --annotator_model, and --max_tokens",
     )
     parser.add_argument(
+        "--df_mcq_data_file",
+        type=str,
+        default=None,
+        help="Path to the JSON file used by the DF_MCQ task.",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Run evalutaions in debug mode on a few examples",
@@ -372,19 +378,34 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
     import socket
     logger.info('hostname: %s', socket.gethostname())
 
+    task_configs = {}
     if args.config is not None:
         # This overwrites `--tasks` and `--batch_size`
         with open(args.config, "r") as file:
             tasks_yaml = yaml.safe_load(file)
         args.tasks = ",".join([t["task_name"] for t in tasks_yaml["tasks"]])
         batch_sizes_list = [int(t["batch_size"]) if t["batch_size"] != "auto" else "auto" for t in tasks_yaml["tasks"]]
+        task_configs = {
+            task["task_name"]: {key: value for key, value in task.items() if key not in {"task_name", "batch_size"}}
+            for task in tasks_yaml["tasks"]
+            if any(key not in {"task_name", "batch_size"} for key in task)
+        }
         args.annotator_model = tasks_yaml.get("annotator_model", args.annotator_model)
-        args.max_tokens = int(tasks_yaml.get("max_tokens", args.max_tokens))
+        config_max_tokens = tasks_yaml.get("max_tokens")
+        if config_max_tokens is not None:
+            args.max_tokens = int(config_max_tokens)
+        elif args.max_tokens is not None:
+            args.max_tokens = int(args.max_tokens)
     else:
         batch_sizes_list = [
             int(args.batch_size) if args.batch_size != "auto" else args.batch_size
             for _ in range(len(args.tasks.split(",")))
         ]
+
+    if args.df_mcq_data_file is not None:
+        task_configs.setdefault("DF_MCQ", {})["data_file"] = args.df_mcq_data_file
+
+    args.df_mcq_data_file = task_configs.get("DF_MCQ", {}).get("data_file")
 
     # Initialize evaluation tracker
     if args.output_path:
@@ -422,6 +443,7 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
         debug=args.debug,
         seed=args.seed,
         task_list=task_list,
+        task_configs=task_configs,
         system_instruction=args.system_instruction,
     )
     pretrain_task_manager = PretrainTaskManager(args.verbosity, include_path=args.include_path)
@@ -596,6 +618,7 @@ def add_results_metadata(results: Dict, batch_sizes_list: List[int], args: argpa
         "limit": args.limit,
         "annotator_model": args.annotator_model,
         "max_tokens": args.max_tokens if args.max_tokens is not None else "default",
+        "df_mcq_data_file": args.df_mcq_data_file,
         # "bootstrap_iters": args.bootstrap_iters,
         "gen_kwargs": args.gen_kwargs,
         "random_seed": args.seed[0],

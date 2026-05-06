@@ -221,13 +221,18 @@ class TaskManager:
     """
 
     def __init__(
-        self, benchmarks_dir: str = "chat_benchmarks", task_list: Optional[List[str]] = None, **benchmark_kwargs
+        self,
+        benchmarks_dir: str = "chat_benchmarks",
+        task_list: Optional[List[str]] = None,
+        task_configs: Optional[Dict[str, Dict[str, Any]]] = None,
+        **benchmark_kwargs,
     ):
         self.logger = logging.getLogger("TaskManager")
         self.tasks: Dict[str, Any] = {}
         self.benchmark_instances: Dict[str, BaseBenchmark] = {}
         self.benchmark_kwargs = benchmark_kwargs
         self.task_list = task_list
+        self.task_configs = task_configs or {}
         self.list_of_tasks_that_require_annotator_model = []
 
         # Load benchmarks from directory
@@ -320,12 +325,14 @@ class TaskManager:
         try:
             init_params = inspect.signature(benchmark_class.__init__).parameters
             valid_kwargs = {}
+            merged_kwargs = dict(self.benchmark_kwargs)
+            merged_kwargs.update(self.task_configs.get(name, {}))
 
             # Only pass kwargs that the benchmark's __init__ accepts
             # Filter out None values to let benchmarks use their default values
             for param_name, param in init_params.items():
-                if param_name in self.benchmark_kwargs:
-                    value = self.benchmark_kwargs[param_name]
+                if param_name in merged_kwargs:
+                    value = merged_kwargs[param_name]
                     # Only pass the argument if it's not None, so benchmarks can use defaults
                     if value is not None:
                         valid_kwargs[param_name] = value
@@ -333,10 +340,10 @@ class TaskManager:
 
             # Ensure system_instruction is passed if available and not None
             if (
-                "system_instruction" in self.benchmark_kwargs
-                and self.benchmark_kwargs["system_instruction"] is not None
+                "system_instruction" in merged_kwargs
+                and merged_kwargs["system_instruction"] is not None
             ):
-                valid_kwargs["system_instruction"] = self.benchmark_kwargs["system_instruction"]
+                valid_kwargs["system_instruction"] = merged_kwargs["system_instruction"]
 
             instance = benchmark_class(**valid_kwargs)
 
