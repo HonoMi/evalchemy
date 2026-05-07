@@ -20,6 +20,26 @@ from transformers import PreTrainedTokenizerBase
 logger = logging.getLogger(__name__)
 
 
+def _is_openai_completion_model(model: LM) -> bool:
+    return (
+        model.__class__.__name__
+        in {
+            "OpenAIChatCompletion",
+            "OpenAICompletionsAPI",
+            "LocalChatCompletion",
+            "LocalCompletionsAPI",
+        }
+        or model.__class__.__module__.endswith("openai_completions")
+    )
+
+
+def _is_vllm_model(model: LM) -> bool:
+    return (
+        model.__class__.__name__ == "VLLM"
+        or model.__class__.__module__.endswith("vllm_causallms")
+    )
+
+
 def truncate_prompt(
     text: str,
     tokenizer: PreTrainedTokenizerBase,
@@ -53,6 +73,9 @@ class BaseBenchmark(ABC):
 
 
     def _normalize_model_args(self, model: LM, instances: List[Instance]) -> List[Instance]:
+        is_openai_model = _is_openai_completion_model(model)
+        is_vllm_model = _is_vllm_model(model)
+
         for instance in instances:
             seeds = None
             if "seed" in instance.args[1]:
@@ -62,26 +85,19 @@ class BaseBenchmark(ABC):
                 np.random.seed(seeds[1])
                 torch.manual_seed(seeds[2])
 
-                if isinstance(model, lm_eval_models.openai_completions.OpenAIChatCompletion) or isinstance(
-                    model, lm_eval_models.openai_completions.OpenAICompletionsAPI
-                ):
+                if is_openai_model:
                     instance.args[1]["seed"] = seeds[0] if "seed" in instance.args[1] else None
-                elif (
-                    isinstance(model, lm_eval_models.vllm_causallms.VLLM)
-                    or "UploadInstancesToHF" in model.__class__.__name__
-                ):
+                elif is_vllm_model or "UploadInstancesToHF" in model.__class__.__name__:
                     instance.args[1]["seed"] = seeds[0] if "seed" in instance.args[1] else None
                 else:  # Huggingface does not support seed
                     _ = instance.args[1].pop("seed") if "seed" in instance.args[1] else None
             if "max_new_tokens" in instance.args[1]:
                 max_new_tokens = instance.args[1].pop("max_new_tokens")
-                if isinstance(model, lm_eval_models.openai_completions.OpenAIChatCompletion) or isinstance(
-                    model, lm_eval_models.openai_completions.OpenAICompletionsAPI
-                ):
+                if is_openai_model:
                     instance.args[1]["max_tokens"] = max_new_tokens
                     if "4o" in model.model:
                         instance.args[1]["max_tokens"] = min(max_new_tokens, 16384)
-                elif isinstance(model, lm_eval_models.vllm_causallms.VLLM):
+                elif is_vllm_model:
                     instance.args[1]["max_gen_toks"] = max_new_tokens
                 else:  # Huggingface
                     instance.args[1]["max_new_tokens"] = max_new_tokens
