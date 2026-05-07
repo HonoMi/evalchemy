@@ -1,12 +1,13 @@
 import argparse
 import concurrent.futures
+import functools
 import json
 import logging
 import os
 import sys
 import time
 import math
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 
 import lm_eval.api.metrics
 import lm_eval.api.registry
@@ -41,6 +42,92 @@ logger = logging.getLogger(__name__)
 from lm_eval.api.instance import Instance
 
 _SAMPLING_INFO_ONCE = False
+
+
+def str_to_bool(value):
+    if isinstance(value, bool):
+        return value
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
+
+def _is_enable_thinking_kwarg_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "enable_thinking" in message and (
+        "unexpected keyword argument" in message
+        or "got an unexpected keyword argument" in message
+        or "takes no keyword argument" in message
+        or "takes no argument" in message
+        or "macro" in message
+    )
+
+
+def patch_apply_chat_template_for_enable_thinking(enable_thinking: Optional[bool]) -> None:
+    if enable_thinking is None:
+        return
+
+    import transformers
+
+    for class_name in ("PreTrainedTokenizerBase", "ProcessorMixin"):
+        cls = getattr(transformers, class_name, None)
+        if cls is None or not hasattr(cls, "apply_chat_template"):
+            continue
+
+        if not getattr(cls, "_evalchemy_enable_thinking_patch_installed", False):
+            original = cls.apply_chat_template
+
+            @functools.wraps(original)
+            def wrapped_apply_chat_template(
+                self,
+                *args,
+                __original=original,
+                **kwargs,
+            ):
+                patched_kwargs = dict(kwargs)
+                default_enable_thinking = getattr(
+                    type(self),
+                    "_evalchemy_default_enable_thinking",
+                    None,
+                )
+                if (
+                    default_enable_thinking is not None
+                    and "enable_thinking" not in patched_kwargs
+                ):
+                    patched_kwargs["enable_thinking"] = default_enable_thinking
+                try:
+                    return __original(self, *args, **patched_kwargs)
+                except Exception as exc:
+                    if (
+                        "enable_thinking" not in patched_kwargs
+                        or not _is_enable_thinking_kwarg_error(exc)
+                    ):
+                        raise
+                    patched_kwargs.pop("enable_thinking", None)
+                    return __original(self, *args, **patched_kwargs)
+
+            cls.apply_chat_template = wrapped_apply_chat_template
+            cls._evalchemy_enable_thinking_patch_installed = True
+
+        cls._evalchemy_default_enable_thinking = enable_thinking
+
+
+def update_model_args_with_key(model_args: Union[str, Dict[str, Any], None], key: str, value):
+    if isinstance(model_args, dict):
+        updated = dict(model_args)
+        updated[key] = value
+        return updated
+
+    serialized_value = "True" if value is True else "False" if value is False else str(value)
+    if not model_args:
+        return f"{key}={serialized_value}"
+
+    args_list = [arg for arg in model_args.split(",") if arg and not arg.startswith(f"{key}=")]
+    args_list.append(f"{key}={serialized_value}")
+    return ",".join(args_list)
 
 def _instance_post_init_(self) -> None:
     global _SAMPLING_INFO_ONCE
@@ -176,6 +263,17 @@ def setup_custom_parser():
         "--custom_chat_template_name",
         type=str,
         default=None,
+    )
+    parser.add_argument(
+        "--enable_thinking",
+        nargs="?",
+        const=True,
+        default=None,
+        type=str_to_bool,
+        help=(
+            "Pass `enable_thinking` to the tokenizer chat template when supported. "
+            "Use `--enable_thinking false` to disable it explicitly."
+        ),
     )
 
     return parser
@@ -335,7 +433,10 @@ def evaluate(
     return results
 
 
-def update_model_args_with_name(model_args: str, model_name: str) -> str:
+def update_model_args_with_name(
+    model_args: Union[str, Dict[str, Any], None],
+    model_name: str,
+):
     """
     Update model_args string to include pretrained model name if not already present.
 
@@ -346,6 +447,16 @@ def update_model_args_with_name(model_args: str, model_name: str) -> str:
     Returns:
         str: Updated model args string
     """
+    if isinstance(model_args, dict):
+        updated = dict(model_args)
+        if "pretrained" not in updated:
+            updated["pretrained"] = model_name
+        else:
+            assert (
+                updated["pretrained"] == model_name
+            ), f"Provided model_args contains different pretrained model '{updated['pretrained']}' than specified model_name '{model_name}'"
+        return updated
+
     if not model_args:
         return f"pretrained={model_name}"
 
@@ -371,6 +482,14 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
         parser = setup_custom_parser()
         args = parse_eval_args(parser)
     args.verbosity = args.verbosity or "INFO"
+
+    if args.enable_thinking is not None:
+        patch_apply_chat_template_for_enable_thinking(args.enable_thinking)
+        args.model_args = update_model_args_with_key(
+            args.model_args or "",
+            "enable_thinking",
+            args.enable_thinking,
+        )
 
     if args.custom_chat_template_name is not None:
         patch_hf_apply_chat_template(get_hf_chat_template(args.custom_chat_template_name))
@@ -619,6 +738,7 @@ def add_results_metadata(results: Dict, batch_sizes_list: List[int], args: argpa
         "annotator_model": args.annotator_model,
         "max_tokens": args.max_tokens if args.max_tokens is not None else "default",
         "df_mcq_data_file": args.df_mcq_data_file,
+        "enable_thinking": args.enable_thinking,
         # "bootstrap_iters": args.bootstrap_iters,
         "gen_kwargs": args.gen_kwargs,
         "random_seed": args.seed[0],
