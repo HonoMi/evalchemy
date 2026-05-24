@@ -878,6 +878,7 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
 
     if args.enable_thinking is not None:
         patch_apply_chat_template_for_enable_thinking(args.enable_thinking)
+        logger.info("Applying enable_thinking=%s via tokenizer chat template patch", args.enable_thinking)
 
     if args.custom_chat_template_name is not None:
         patch_hf_apply_chat_template(get_hf_chat_template(args.custom_chat_template_name))

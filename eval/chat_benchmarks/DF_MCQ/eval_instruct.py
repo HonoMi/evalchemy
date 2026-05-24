@@ -185,16 +185,37 @@ class DF_MCQBenchmark(BaseBenchmark):
                     f"Unsupported DF_MCQ question format at index {idx} in {self.data_file}: expected an object"
                 )
 
-            choices = [
-                {
-                    "option": str(choice["option"]).strip().upper(),
-                    "text": str(choice["text"]).strip(),
-                }
-                for choice in question["choices"]
-            ]
+            # choices = [
+            #     {
+            #         "option": str(choice["option"]).strip().upper(),
+            #         "text": str(choice["text"]).strip(),
+            #     }
+            #     for choice in question["choices"]
+            # ]
+            choices = []
+            try:
+                for choice in question["choices"]:
+                    if isinstance(choice, dict):
+                        choices.append(
+                            {
+                                "option": str(choice["option"]).strip().upper(),
+                                "text": str(choice["text"]).strip(),
+                            }
+                        )
+                    elif isinstance(choice, str):
+                        choices.append(
+                            {
+                                "option": chr(65 + len(choices)),
+                                "text": choice.strip(),
+                            }
+                        )
+            except (KeyError, IndexError) as e:
+                self.logger.warning(f"Failed to parse choices for question {idx}: {e}")
+                continue
+
             normalized_questions.append(
                 {
-                    "id": raw_question.get("question_index", question.get("id", idx))
+                    "id": raw_question.get("id", raw_question.get("question_index", question.get("id", idx)))
                     if isinstance(raw_question, dict)
                     else idx,
                     "question": str(question["question"]).strip(),
