@@ -1,4 +1,3 @@
-import re
 import random
 import os
 import time
@@ -12,33 +11,8 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
+from eval.answer_extraction import normalize_generation_text, parse_mcq_single
 from eval.task import BaseBenchmark
-
-
-# --- Extraction helpers from https://github.com/TIGER-AI-Lab/MMLU-Pro/blob/main/evaluate_from_local.py ---
-
-
-def extract_answer(text: str) -> Optional[str]:
-    pattern = r"answer is \(?([A-J])\)?"
-    match = re.search(pattern, text, re.IGNORECASE)
-    if match:
-        return match.group(1)
-    else:
-        return extract_again(text)
-
-
-def extract_again(text: str) -> Optional[str]:
-    match = re.search(r"Answer:\s*([A-J])", text, re.IGNORECASE)
-    if match:
-        return match.group(1)
-    else:
-        return extract_final(text)
-
-
-def extract_final(text: str) -> Optional[str]:
-    pattern = r"\b[A-J]\b(?!.*\b[A-J]\b)"
-    match = re.search(pattern, text, re.DOTALL)
-    return match.group(0) if match else None
 
 
 # --- Prompt construction from Script 1 ---
@@ -162,17 +136,8 @@ class MMLUProBenchmark(BaseBenchmark):
         outputs = self.compute(model, instances)
         examples = []
         for ex, out in zip(self.test_examples, outputs):
-            # unwrap different output types
-            if isinstance(out, str):
-                text = out
-            elif hasattr(out, "outputs") and out.outputs:
-                text = out.outputs[0].text
-            elif hasattr(out, "text"):
-                text = out.text
-            else:
-                text = str(out)
-
-            pred = extract_answer(text)
+            text = normalize_generation_text(out)
+            pred = parse_mcq_single(text, letters="ABCDEFGHIJ", fallback_window=1_000_000)
             ex_copy = ex.copy()
             ex_copy["model_outputs"] = text
             ex_copy["pred"] = pred

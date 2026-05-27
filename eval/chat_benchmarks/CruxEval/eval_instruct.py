@@ -12,6 +12,7 @@ import re
 import itertools
 
 from eval.task import BaseBenchmark
+from eval.answer_extraction import normalize_generation_text
 from eval.chat_benchmarks.utils import has_code
 
 from .evaluation import evaluate_generations
@@ -118,6 +119,7 @@ assert f(??) == {output}
 
 
 def extract_answer(generation):
+    generation = normalize_generation_text(generation)
     # if "[ANSWER]" in generation and "[/ANSWER]" in generation:
     #     start = generation.index("[ANSWER]") + len("[ANSWER]")
     #     end = generation.index("[/ANSWER]")

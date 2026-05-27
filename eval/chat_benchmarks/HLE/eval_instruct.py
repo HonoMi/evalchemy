@@ -9,6 +9,7 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from run_judge_results import judge_all_responses
 
+from eval.answer_extraction import normalize_generation_text
 from eval.task import BaseBenchmark
 
 from .testing_utils import get_multiple_choice_answer
@@ -145,8 +146,9 @@ class HLESubsetBenchmark(BaseBenchmark):
         examples_list = []
 
         for example, outputs in zip(examples, zip(*all_outputs)):
-            example["model_outputs"] = list(outputs)
-            example["model_answers"] = [get_multiple_choice_answer(o) for o in outputs]
+            texts = [normalize_generation_text(o) for o in outputs]
+            example["model_outputs"] = texts
+            example["model_answers"] = [get_multiple_choice_answer(o) for o in texts]
             examples_list.append(example)
 
         return {"examples": examples_list}

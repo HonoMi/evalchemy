@@ -27,6 +27,7 @@ from eval.chat_benchmarks.LiveBench.livebench.common import (
     reorg_answer_file,
 )
 from eval.chat_benchmarks.LiveBench.livebench.gen_ground_truth_judgment import gen_judgments
+from eval.answer_extraction import normalize_generation_text
 from eval.task import BaseBenchmark
 from eval.chat_benchmarks.LiveBench.livebench.model import get_conversation_template
 
@@ -210,7 +211,7 @@ class LiveBenchBenchmark(BaseBenchmark):
 
                     for idx, output in enumerate(outputs):
                         # Match gen_model_answer.py output cleaning
-                        output = output.strip()
+                        output = normalize_generation_text(output).strip()
 
                         # Handle stop strings like in gen_model_answer.py
                         if all_convs[idx].stop_str and isinstance(all_convs[idx].stop_str, list):

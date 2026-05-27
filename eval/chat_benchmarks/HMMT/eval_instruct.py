@@ -8,6 +8,7 @@ from lm_eval.api.model import LM
 from lm_eval.tasks.hendrycks_math.utils import is_equiv, last_boxed_only_string, remove_boxed
 
 from datasets import load_dataset
+from eval.answer_extraction import normalize_generation_text
 from eval.task import BaseBenchmark
 
 from matharena.parser import extract_answer, parse_answer, check_answers, WarningType
@@ -111,9 +112,10 @@ class HMMTBenchmark(BaseBenchmark):
             return None
 
         for example, outputs in zip(examples, zip(*all_outputs)):
-            example["model_outputs"] = list(outputs)
+            texts = [normalize_generation_text(o) for o in outputs]
+            example["model_outputs"] = texts
             list_answer = "," in str(example["answer"])
-            example["model_answers"] = [extract_answer(o, False, True, list_answer)[0] for o in outputs]
+            example["model_answers"] = [extract_answer(o, False, True, list_answer)[0] for o in texts]
             example["label"] = []
         return {"examples": examples}
 

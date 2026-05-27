@@ -1,7 +1,6 @@
 import json
 import logging
 import math
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -9,6 +8,7 @@ import numpy as np
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 
+from eval.answer_extraction import normalize_generation_text, parse_mcq_single
 from eval.task import BaseBenchmark
 
 
@@ -22,20 +22,6 @@ PROMPT = """次の四択問題に答えてください。各選択肢を検討�
 
 答え:
 """
-
-_FULLWIDTH_TO_ASCII = str.maketrans(
-    {
-        "Ａ": "A",
-        "Ｂ": "B",
-        "Ｃ": "C",
-        "Ｄ": "D",
-        "ａ": "A",
-        "ｂ": "B",
-        "ｃ": "C",
-        "ｄ": "D",
-    }
-)
-
 
 class DF_MCQBenchmark(BaseBenchmark):
     """Local MCQ benchmark backed by a user-specified JSON file."""
@@ -99,7 +85,7 @@ class DF_MCQBenchmark(BaseBenchmark):
             return None
 
         for example, output in zip(examples, outputs):
-            text = self.unwrap_output(output)
+            text = normalize_generation_text(output)
             prediction = self.extract_answer(text)
             example["model_output"] = text
             example["model_answer"] = prediction
@@ -243,23 +229,4 @@ class DF_MCQBenchmark(BaseBenchmark):
         return str(output)
 
     def extract_answer(self, output: str) -> str:
-        if not output:
-            return ""
-
-        normalized_output = output.translate(_FULLWIDTH_TO_ASCII).upper()
-
-        patterns = [
-            r"\\BOXED\s*\{\s*([A-D])\s*\}",
-            r"答え(?:は|:)?\s*[（(「『【\[]?\s*([A-D])\s*[）)」』】\]]?",
-            r"ANSWER(?: IS|:)?\s*[（(\[]?\s*([A-D])\s*[)\]]?",
-        ]
-        for pattern in patterns:
-            matches = re.findall(pattern, normalized_output, flags=re.IGNORECASE)
-            if matches:
-                return matches[-1].upper()
-
-        fallback_matches = re.findall(r"(?<![A-Z])([A-D])(?![A-Z])", normalized_output[-200:])
-        if fallback_matches:
-            return fallback_matches[-1].upper()
-
-        return ""
+        return parse_mcq_single(output, letters="ABCD")

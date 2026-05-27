@@ -8,6 +8,7 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from utils import compute_score, last_boxed_only_string, remove_boxed
 
+from eval.answer_extraction import normalize_generation_text, parse_boxed_scalar
 from eval.task import BaseBenchmark
 
 ########################################################################
@@ -166,8 +167,9 @@ class JEEBenchBenchmark(BaseBenchmark):
         examples_list = []
 
         for example, outputs in zip(examples, zip(*all_outputs)):
-            example["model_outputs"] = list(outputs)
-            example["model_answers"] = [self.extract_answer(o) for o in outputs]
+            texts = [normalize_generation_text(o) for o in outputs]
+            example["model_outputs"] = texts
+            example["model_answers"] = [self.extract_answer(o) for o in texts]
             examples_list.append(example)
 
         return {"examples": examples_list}
@@ -240,6 +242,9 @@ class JEEBenchBenchmark(BaseBenchmark):
         Returns:
             str: Extracted final answer. Returns empty string if no answer found in \boxed.
         """
+        answer = parse_boxed_scalar(output)
+        if answer:
+            return answer
         try:
             answer = remove_boxed(last_boxed_only_string(output))
             return answer

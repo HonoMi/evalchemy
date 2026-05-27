@@ -1,7 +1,6 @@
 from typing import Dict, List, Any, Optional, Generator
 import json
 import os
-import re
 import tempfile
 from pathlib import Path
 from tqdm import tqdm
@@ -11,6 +10,7 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from mbpp_plus.evaluation import evaluate_functional_correctness
 from .utils.utils import extract_generation_code, language_settings
+from eval.answer_extraction import normalize_generation_text, parse_code_block
 from eval.task import BaseBenchmark
 
 
@@ -110,12 +110,12 @@ Here is my problem:
 
     def extract_code(self, completion: str) -> str:
         """Extract code block from model completion."""
-        try:
-            code_block = re.findall(r"```python\n(.*?)```", completion, re.DOTALL | re.IGNORECASE)[0]
+        completion = normalize_generation_text(completion)
+        code_block = parse_code_block(completion, language="python")
+        if code_block is not None:
             return code_block
-        except Exception as e:
-            self.logger.warning(f"Failed to extract code block, using full completion.\nError: {str(e)}")
-            return completion
+        self.logger.warning("Failed to extract code block, using full completion.")
+        return completion
 
     def generate_responses(self, model: LM) -> Dict[str, Any]:
         """

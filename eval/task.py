@@ -16,6 +16,8 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from transformers import PreTrainedTokenizerBase
 
+from eval.answer_extraction import normalize_generation_text
+
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +187,7 @@ class BaseBenchmark(ABC):
             prompts = truncated_prompts
 
         results = model.generate_until(prompts)
+        results = [normalize_generation_text(result) if result is not None else "" for result in results]
         if model.world_size > 1:
             all_results = [None for _ in range(model.world_size)]
 

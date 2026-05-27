@@ -9,6 +9,7 @@ from datasets import load_dataset
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 
+from eval.answer_extraction import normalize_generation_text
 from eval.task import BaseBenchmark
 
 from .evaluation import evaluate_functional_correctness
@@ -187,6 +188,7 @@ class BigCodeBenchBenchmark(BaseBenchmark):
 
                 generated_examples = []
                 for example, output in zip(examples, outputs):
+                    output = normalize_generation_text(output)
                     example_with_output = example.copy()
                     example_with_output["output"] = output
                     example_with_output["prompt"] = example_with_output.pop("prompt")

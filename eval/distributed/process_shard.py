@@ -1,7 +1,6 @@
 import argparse
 import logging
 import os
-import re
 import tempfile
 
 from datasets import load_dataset
@@ -10,57 +9,20 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 
+from eval.answer_extraction import (
+    extract_harmony_content,
+    supports_harmony_postprocess,
+)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-_HARMONY_FINAL_PREFIX_RE = re.compile(r"^\s*(?:assistant\s+)?final\b[:\s]*", re.IGNORECASE)
-
-
-def _strip_harmony_final_prefix(text: str) -> str:
-    return _HARMONY_FINAL_PREFIX_RE.sub("", text, count=1)
-
-
 def _supports_harmony_postprocess(tokenizer) -> bool:
-    return hasattr(tokenizer, "parse_response") or hasattr(tokenizer, "parse_harmony_message")
+    return supports_harmony_postprocess(tokenizer)
 
 
 def _extract_harmony_content(tokenizer, token_ids: list[int], fallback_text: str) -> str:
-    if not _supports_harmony_postprocess(tokenizer):
-        return fallback_text
-
-    decoded_text = fallback_text
-    if token_ids:
-        try:
-            decoded_text = tokenizer.decode(token_ids)
-        except Exception as exc:
-            logger.debug("Failed to decode Harmony token ids: %r", exc)
-
-    if hasattr(tokenizer, "parse_response"):
-        try:
-            parsed = tokenizer.parse_response(decoded_text)
-            content = parsed.get("content") if isinstance(parsed, dict) else None
-            if isinstance(content, str) and content.strip():
-                return content
-        except Exception as exc:
-            logger.debug("Failed to parse Harmony response: %r", exc)
-
-    if token_ids and hasattr(tokenizer, "parse_harmony_message"):
-        try:
-            response_prefill = tokenizer.encode("<|start|>assistant")
-            parsed_messages = tokenizer.parse_harmony_message(response_prefill + token_ids)
-            last_content = None
-            for message in parsed_messages:
-                content = getattr(message, "content", None)
-                if content is not None and getattr(content, "token_ids", None):
-                    text = tokenizer.decode(content.token_ids)
-                    if text.strip():
-                        last_content = text
-            if last_content is not None:
-                return last_content
-        except Exception as exc:
-            logger.debug("Failed to parse Harmony token stream: %r", exc)
-
-    return _strip_harmony_final_prefix(decoded_text)
+    return extract_harmony_content(tokenizer, token_ids, fallback_text)
 
 
 @retry(

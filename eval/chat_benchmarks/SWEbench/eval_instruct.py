@@ -10,6 +10,7 @@ from swebench.harness.constants import (
 )
 
 from datasets import load_dataset
+from eval.answer_extraction import normalize_generation_text
 from eval.task import BaseBenchmark
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
@@ -91,7 +92,7 @@ class SWEBenchBenchmark(BaseBenchmark):
             results[instance["instance_id"]] = {
                 KEY_INSTANCE_ID: instance["instance_id"],
                 KEY_MODEL: model.model_identifier,
-                KEY_PREDICTION: output,
+                KEY_PREDICTION: normalize_generation_text(output),
             }
 
         output_file = f"{self.dataset_name.split('/')[-1]}.json"

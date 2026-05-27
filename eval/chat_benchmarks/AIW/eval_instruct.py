@@ -1,7 +1,6 @@
 import json
 import logging
 import numpy as np
-import re
 from typing import Any, Dict, List, Optional
 import os
 
@@ -9,6 +8,7 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from lm_eval.tasks.hendrycks_math.utils import is_equiv
 
+from eval.answer_extraction import normalize_generation_text, parse_numeric
 from eval.task import BaseBenchmark
 
 
@@ -108,8 +108,9 @@ class AIWBenchmark(BaseBenchmark):
 
             # Store per-ID results
             for example, output in zip(examples, outputs):
-                example["model_output"] = output
-                example["model_answer"] = self.extract_answer(output)
+                text = normalize_generation_text(output)
+                example["model_output"] = text
+                example["model_answer"] = self.extract_answer(text)
 
         return {"examples": examples}
 
@@ -128,16 +129,7 @@ class AIWBenchmark(BaseBenchmark):
 
     def extract_answer(self, output: str) -> str:
         """Extract the final answer from a model-generated solution."""
-        try:
-            return re.findall(r"answer:.*?(\d+)", output.lower())[-1]
-        except:
-            try:
-                return re.findall(r"answer is.*?(\d+)", output.lower())[-1]
-            except:
-                try:
-                    return re.findall(r"boxed{(\d+)}", output.lower())[-1]
-                except:
-                    return None
+        return parse_numeric(output)
 
     def evaluate_responses(self, results: Dict[str, Any]) -> Dict[str, float]:
         """Evaluate the generated solution completions over multiple trials."""

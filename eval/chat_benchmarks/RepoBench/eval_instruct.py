@@ -12,6 +12,7 @@ from lm_eval.api.instance import Instance
 from archive_data.utils import load_data, construct_trainable_data, get_first_line_not_comment
 from data.utils import construct_prompt
 from evaluation.metrics import exact_match_score, edit_similarity_score, codebleu_score
+from eval.answer_extraction import normalize_generation_text
 from eval.task import BaseBenchmark
 
 
@@ -113,6 +114,7 @@ class RepoBenchmark(BaseBenchmark):
 
                 generated_examples = []
                 for idx, (example, output) in enumerate(zip(dataset, outputs)):
+                    output = normalize_generation_text(output)
                     generated_examples.append(
                         {
                             "idx": idx,
@@ -169,6 +171,7 @@ class RepoBenchmark(BaseBenchmark):
 
                 generated_examples = []
                 for idx, (example, output) in enumerate(zip(examples, outputs)):
+                    output = normalize_generation_text(output)
                     generated_examples.append(
                         {
                             "idx": idx,
