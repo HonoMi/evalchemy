@@ -8,6 +8,7 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from lm_eval.tasks.hendrycks_math.utils import is_equiv, last_boxed_only_string, remove_boxed
 
+from eval.answer_extraction import normalize_generation_text, parse_boxed_scalar
 from eval.task import BaseBenchmark
 
 # Modified version of hendrycks_math with additional instruction to mark the solution with \\boxed
@@ -66,12 +67,6 @@ class AMC23Benchmark(BaseBenchmark):
 
         # Prepare instances for model
         all_instances = []
-        if isinstance(model, lm_eval.models.huggingface.HFLM):
-            model_name = model.pretrained
-        elif isinstance(model, lm_eval.models.openai_completions.OpenAIChatCompletion):
-            model_name = str(f"openai/{model.model}")
-        else:
-            model_name = model.model_args["model"]
 
         all_outputs = []
         for i in range(self.n_repeat):
@@ -119,8 +114,9 @@ class AMC23Benchmark(BaseBenchmark):
             return None
 
         for example, outputs in zip(examples, zip(*all_outputs)):
-            example["model_outputs"] = list(outputs)
-            example["model_answers"] = [self.extract_answer(o) for o in outputs]
+            texts = [normalize_generation_text(o) for o in outputs]
+            example["model_outputs"] = texts
+            example["model_answers"] = [self.extract_answer(o) for o in texts]
 
         return {"examples": examples}
 
@@ -183,6 +179,9 @@ class AMC23Benchmark(BaseBenchmark):
         Returns:
             str: Extracted final answer. Returns empty string if no answer found in \boxed.
         """
+        answer = parse_boxed_scalar(output)
+        if answer:
+            return answer
         try:
             answer = remove_boxed(last_boxed_only_string(output))
             return answer

@@ -1,7 +1,6 @@
 import json
 import logging
 import math
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -9,6 +8,7 @@ import numpy as np
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 
+from eval.answer_extraction import normalize_generation_text, parse_mcq_single
 from eval.task import BaseBenchmark
 
 
@@ -37,10 +37,8 @@ _FULLWIDTH_TO_ASCII = str.maketrans(
 )
 
 
-class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
-    """
-    Local MCQ benchmark backed by 2025_Imaichi_MCQ.json.
-    """
+class DF_MCQBenchmark(BaseBenchmark):
+    """Local MCQ benchmark backed by a user-specified JSON file."""
 
     def __init__(
         self,
@@ -52,7 +50,7 @@ class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
         system_instruction: Optional[str] = None,
     ):
         super().__init__(logger=logger, system_instruction=system_instruction)
-        self.data_file = data_file or str(Path(__file__).resolve().parent / "data" / "2025_Imaichi_MCQ.json")
+        self.data_file = str(Path(data_file).expanduser()) if data_file else None
         self.debug = debug
         self.seed = seed
         self.max_new_tokens = min(max_tokens or 4096, 4096)
@@ -94,14 +92,14 @@ class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
             }
             instances.append(instance)
 
-        self.logger.info("Generating responses for DF_MCQ_Imaichi_2025...")
+        self.logger.info("Generating responses for DF_MCQ...")
         outputs = self.compute(model, instances)
 
         if model.rank != 0:
             return None
 
         for example, output in zip(examples, outputs):
-            text = self.unwrap_output(output)
+            text = normalize_generation_text(output)
             prediction = self.extract_answer(text)
             example["model_output"] = text
             example["model_answer"] = prediction
@@ -157,24 +155,69 @@ class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
         return results
 
     def load_questions(self) -> List[Dict[str, Any]]:
-        with open(self.data_file, "r") as f:
+        if not self.data_file:
+            raise ValueError(
+                "DF_MCQ requires a data file. Pass --df_mcq_data_file or set tasks[].data_file in the YAML config."
+            )
+
+        with open(self.data_file, "r", encoding="utf-8") as f:
             questions = json.load(f)
+
+        if isinstance(questions, dict):
+            if "questions" in questions:
+                questions = questions["questions"]
+            elif "data" in questions:
+                questions = questions["data"]
+            else:
+                raise ValueError(f"Unsupported DF_MCQ data format in {self.data_file}: top-level dict keys {list(questions)}")
+
+        if not isinstance(questions, list):
+            raise ValueError(f"Unsupported DF_MCQ data format in {self.data_file}: expected a list of questions")
 
         if self.debug:
             questions = questions[:2]
 
         normalized_questions = []
-        for idx, question in enumerate(questions):
-            choices = [
-                {
-                    "option": str(choice["option"]).strip().upper(),
-                    "text": str(choice["text"]).strip(),
-                }
-                for choice in question["choices"]
-            ]
+        for idx, raw_question in enumerate(questions):
+            question = raw_question.get("mcq", raw_question) if isinstance(raw_question, dict) else raw_question
+            if not isinstance(question, dict):
+                raise ValueError(
+                    f"Unsupported DF_MCQ question format at index {idx} in {self.data_file}: expected an object"
+                )
+
+            # choices = [
+            #     {
+            #         "option": str(choice["option"]).strip().upper(),
+            #         "text": str(choice["text"]).strip(),
+            #     }
+            #     for choice in question["choices"]
+            # ]
+            choices = []
+            try:
+                for choice in question["choices"]:
+                    if isinstance(choice, dict):
+                        choices.append(
+                            {
+                                "option": str(choice["option"]).strip().upper(),
+                                "text": str(choice["text"]).strip(),
+                            }
+                        )
+                    elif isinstance(choice, str):
+                        choices.append(
+                            {
+                                "option": chr(65 + len(choices)),
+                                "text": choice.strip(),
+                            }
+                        )
+            except (KeyError, IndexError) as e:
+                self.logger.warning(f"Failed to parse choices for question {idx}: {e}")
+                continue
+
             normalized_questions.append(
                 {
-                    "id": idx,
+                    "id": raw_question.get("id", raw_question.get("question_index", question.get("id", idx)))
+                    if isinstance(raw_question, dict)
+                    else idx,
                     "question": str(question["question"]).strip(),
                     "choices": choices,
                     "answer": str(question["answer"]).strip().upper(),
@@ -200,23 +243,4 @@ class DF_MCQ_Imaichi_2025Benchmark(BaseBenchmark):
         return str(output)
 
     def extract_answer(self, output: str) -> str:
-        if not output:
-            return ""
-
-        normalized_output = output.translate(_FULLWIDTH_TO_ASCII).upper()
-
-        patterns = [
-            r"\\BOXED\s*\{\s*([A-D])\s*\}",
-            r"答え(?:は|:)?\s*[（(「『【\[]?\s*([A-D])\s*[）)」』】\]]?",
-            r"ANSWER(?: IS|:)?\s*[（(\[]?\s*([A-D])\s*[)\]]?",
-        ]
-        for pattern in patterns:
-            matches = re.findall(pattern, normalized_output, flags=re.IGNORECASE)
-            if matches:
-                return matches[-1].upper()
-
-        fallback_matches = re.findall(r"(?<![A-Z])([A-D])(?![A-Z])", normalized_output[-200:])
-        if fallback_matches:
-            return fallback_matches[-1].upper()
-
-        return ""
+        return parse_mcq_single(output, letters="ABCD")

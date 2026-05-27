@@ -8,6 +8,7 @@ import json
 
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
+from eval.answer_extraction import normalize_generation_text
 from eval.chat_benchmarks.zeroeval.src.task_configs import prompt_generation
 from eval.task import BaseBenchmark
 
@@ -145,7 +146,7 @@ class ZeroEvalBenchmark(BaseBenchmark):
             if model.rank != 0:
                 continue
 
-            outputs = [[output] for output in outputs]
+            outputs = [[normalize_generation_text(output)] for output in outputs]
 
             # Save outputs
             save_args = Namespace(

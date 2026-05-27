@@ -6,6 +6,7 @@ import os
 
 from lm_eval.api.model import LM
 from lm_eval.api.instance import Instance
+from eval.answer_extraction import normalize_generation_text
 from eval.task import BaseBenchmark
 from .evaluation import evaluate_accuracy
 
@@ -124,7 +125,7 @@ class IFEvalBenchmark(BaseBenchmark):
             for example, output in zip(examples, outputs):
                 try:
                     example_with_output = example.copy()
-                    example_with_output["response"] = output
+                    example_with_output["response"] = normalize_generation_text(output)
                     generated_examples.append(example_with_output)
 
                 except Exception as e:

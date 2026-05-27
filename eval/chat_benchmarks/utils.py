@@ -1,11 +1,12 @@
 import re
 from lm_eval.tasks.hendrycks_math.utils import is_equiv, last_boxed_only_string, remove_boxed
 
+from eval.answer_extraction import iter_code_blocks, normalize_generation_text
+
 
 def has_code(response):
-    pattern = r"```(?:[a-zA-Z]*)\n(.*?)```"
-    # Use re.DOTALL to match multiline content inside backticks
-    matches = re.findall(pattern, response, re.DOTALL)
+    response = normalize_generation_text(response)
+    matches = list(iter_code_blocks(response))
 
     if not matches:
         pattern = r"<answer>(.*?)</answer>"

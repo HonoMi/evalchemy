@@ -16,10 +16,37 @@ from huggingface_hub import model_info
 from lm_eval.loggers.evaluation_tracker import GeneralConfigTracker
 from lm_eval.utils import handle_non_serializable, hash_string, simple_parse_args_string
 
-from database.models import Dataset, EvalResult, EvalSetting, Model
-from database.utils import create_db_engine, create_tables, get_model_from_db, get_or_add_model_by_name, sessionmaker
-
 eval_logger = logging.getLogger(__name__)
+
+Dataset = EvalResult = EvalSetting = Model = None
+create_db_engine = create_tables = get_model_from_db = get_or_add_model_by_name = sessionmaker = None
+
+
+def _load_database_support() -> None:
+    global Dataset, EvalResult, EvalSetting, Model
+    global create_db_engine, create_tables, get_model_from_db, get_or_add_model_by_name, sessionmaker
+
+    if create_db_engine is not None:
+        return
+
+    try:
+        from database.models import Dataset, EvalResult, EvalSetting, Model
+        from database.utils import (
+            create_db_engine,
+            create_tables,
+            get_model_from_db,
+            get_or_add_model_by_name,
+            sessionmaker,
+        )
+    except ImportError:
+        from evalchemy.database.models import Dataset, EvalResult, EvalSetting, Model
+        from evalchemy.database.utils import (
+            create_db_engine,
+            create_tables,
+            get_model_from_db,
+            get_or_add_model_by_name,
+            sessionmaker,
+        )
 
 
 def flatten_dict(d: Dict[str, Any], parent_key: str = "", sep: str = "/") -> Dict[str, Any]:
@@ -95,6 +122,7 @@ class DCEvaluationTracker:
         self.output_path = output_path
         self.use_database = use_database
         if self.use_database:
+            _load_database_support()
             self.engine, self.SessionMaker = create_db_engine()
 
     @contextmanager
@@ -194,6 +222,7 @@ class DCEvaluationTracker:
         """
         assert model_name or model_id
         try:
+            _load_database_support()
             if not model_id:
                 model_id = get_or_add_model_by_name(model_name, model_source)
             model_configs = get_model_from_db(model_id)
@@ -232,6 +261,7 @@ class DCEvaluationTracker:
             RuntimeError: If database operations fail
         """
         try:
+            _load_database_support()
             config = self._prepare_config(config)
             eval_setting = session.query(EvalSetting).filter_by(name=name, parameters=config).first()
             if not eval_setting:
@@ -293,6 +323,7 @@ class DCEvaluationTracker:
             RuntimeError: If database operations fail
         """
         try:
+            _load_database_support()
             for key, score in results.items():
                 if isinstance(score, float) or isinstance(score, int):
                     eval_setting_id = self.get_or_create_eval_setting(key, git_hash, config, session)
@@ -317,6 +348,7 @@ class DCEvaluationTracker:
             raise RuntimeError(f"Database error in insert_eval_results: {str(e)}")
 
     def check_if_already_done(self, name: str, model_id: uuid.UUID):
+        _load_database_support()
         with self.session_scope() as session:
             rows = session.query(EvalResult).filter_by(model_id=model_id).all()
             if not rows:
@@ -355,6 +387,7 @@ class DCEvaluationTracker:
             including model lookup/creation and result insertion.
         """
         eval_logger.info("Updating DB with eval results")
+        _load_database_support()
         with self.session_scope() as session:
             if not model_name:
                 args_dict = simple_parse_args_string(eval_log_dict["config"]["model_args"])
@@ -408,6 +441,7 @@ class DCEvaluationTracker:
             RuntimeError: If model_id is not found in database or if attribute doesn't exist
             ValueError: If model_id is not a valid UUID
         """
+        _load_database_support()
         with self.session_scope() as session:
             try:
                 model = session.get(Model, uuid.UUID(model_id))

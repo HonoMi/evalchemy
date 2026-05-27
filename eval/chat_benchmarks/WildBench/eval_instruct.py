@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
+from eval.answer_extraction import normalize_generation_text
 from eval.task import BaseBenchmark
 
 # Import WildBench utilities
@@ -208,7 +209,7 @@ class WildBenchBenchmark(BaseBenchmark):
             if model.rank != 0:
                 return None
 
-            outputs = [[output] for output in outputs]
+            outputs = [[normalize_generation_text(output)] for output in outputs]
 
             # Save outputs
             save_outputs(self.config, id_strs, outputs, chat_history, metadata, model_inputs, output_path)

@@ -9,6 +9,7 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from alpaca_eval.main import evaluate as alpaca_eval_evaluate
 from alpaca_eval.constants import DEFAULT_ANNOTATOR_CONFIG
+from eval.answer_extraction import normalize_generation_text
 from eval.task import BaseBenchmark
 
 
@@ -132,7 +133,7 @@ class AlpacaBenchmark(BaseBenchmark):
                         "dataset": example["dataset"],
                         "datasplit": self.split,
                         "generator": model.model_identifier,
-                        "output": output,
+                        "output": normalize_generation_text(output),
                     }
                     model_outputs.append(instance)
                 except Exception as e:

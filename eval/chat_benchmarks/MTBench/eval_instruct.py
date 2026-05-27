@@ -15,6 +15,7 @@ from pathlib import Path
 
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
+from eval.answer_extraction import normalize_generation_text
 from eval.task import BaseBenchmark
 from fastchat.llm_judge.common import (
     load_questions,
@@ -154,6 +155,7 @@ class MTBenchBenchmark(BaseBenchmark):
 
                 # Process outputs
                 for q_idx, output in enumerate(outputs):
+                    output = normalize_generation_text(output)
                     all_convs[q_idx].append({"role": "assistant", "content": output})
                     all_choices[q_idx]["turns"].append(output)
 

@@ -16,8 +16,30 @@ from lm_eval.api.instance import Instance
 from lm_eval.api.model import LM
 from transformers import PreTrainedTokenizerBase
 
+from eval.answer_extraction import normalize_generation_text
+
 
 logger = logging.getLogger(__name__)
+
+
+def _is_openai_completion_model(model: LM) -> bool:
+    return (
+        model.__class__.__name__
+        in {
+            "OpenAIChatCompletion",
+            "OpenAICompletionsAPI",
+            "LocalChatCompletion",
+            "LocalCompletionsAPI",
+        }
+        or model.__class__.__module__.endswith("openai_completions")
+    )
+
+
+def _is_vllm_model(model: LM) -> bool:
+    return (
+        model.__class__.__name__ == "VLLM"
+        or model.__class__.__module__.endswith("vllm_causallms")
+    )
 
 
 def truncate_prompt(
@@ -53,6 +75,9 @@ class BaseBenchmark(ABC):
 
 
     def _normalize_model_args(self, model: LM, instances: List[Instance]) -> List[Instance]:
+        is_openai_model = _is_openai_completion_model(model)
+        is_vllm_model = _is_vllm_model(model)
+
         for instance in instances:
             seeds = None
             if "seed" in instance.args[1]:
@@ -62,26 +87,19 @@ class BaseBenchmark(ABC):
                 np.random.seed(seeds[1])
                 torch.manual_seed(seeds[2])
 
-                if isinstance(model, lm_eval_models.openai_completions.OpenAIChatCompletion) or isinstance(
-                    model, lm_eval_models.openai_completions.OpenAICompletionsAPI
-                ):
+                if is_openai_model:
                     instance.args[1]["seed"] = seeds[0] if "seed" in instance.args[1] else None
-                elif (
-                    isinstance(model, lm_eval_models.vllm_causallms.VLLM)
-                    or "UploadInstancesToHF" in model.__class__.__name__
-                ):
+                elif is_vllm_model or "UploadInstancesToHF" in model.__class__.__name__:
                     instance.args[1]["seed"] = seeds[0] if "seed" in instance.args[1] else None
                 else:  # Huggingface does not support seed
                     _ = instance.args[1].pop("seed") if "seed" in instance.args[1] else None
             if "max_new_tokens" in instance.args[1]:
                 max_new_tokens = instance.args[1].pop("max_new_tokens")
-                if isinstance(model, lm_eval_models.openai_completions.OpenAIChatCompletion) or isinstance(
-                    model, lm_eval_models.openai_completions.OpenAICompletionsAPI
-                ):
+                if is_openai_model:
                     instance.args[1]["max_tokens"] = max_new_tokens
                     if "4o" in model.model:
                         instance.args[1]["max_tokens"] = min(max_new_tokens, 16384)
-                elif isinstance(model, lm_eval_models.vllm_causallms.VLLM):
+                elif is_vllm_model:
                     instance.args[1]["max_gen_toks"] = max_new_tokens
                 else:  # Huggingface
                     instance.args[1]["max_new_tokens"] = max_new_tokens
@@ -169,6 +187,7 @@ class BaseBenchmark(ABC):
             prompts = truncated_prompts
 
         results = model.generate_until(prompts)
+        results = [normalize_generation_text(result) if result is not None else "" for result in results]
         if model.world_size > 1:
             all_results = [None for _ in range(model.world_size)]
 
@@ -221,13 +240,18 @@ class TaskManager:
     """
 
     def __init__(
-        self, benchmarks_dir: str = "chat_benchmarks", task_list: Optional[List[str]] = None, **benchmark_kwargs
+        self,
+        benchmarks_dir: str = "chat_benchmarks",
+        task_list: Optional[List[str]] = None,
+        task_configs: Optional[Dict[str, Dict[str, Any]]] = None,
+        **benchmark_kwargs,
     ):
         self.logger = logging.getLogger("TaskManager")
         self.tasks: Dict[str, Any] = {}
         self.benchmark_instances: Dict[str, BaseBenchmark] = {}
         self.benchmark_kwargs = benchmark_kwargs
         self.task_list = task_list
+        self.task_configs = task_configs or {}
         self.list_of_tasks_that_require_annotator_model = []
 
         # Load benchmarks from directory
@@ -320,12 +344,14 @@ class TaskManager:
         try:
             init_params = inspect.signature(benchmark_class.__init__).parameters
             valid_kwargs = {}
+            merged_kwargs = dict(self.benchmark_kwargs)
+            merged_kwargs.update(self.task_configs.get(name, {}))
 
             # Only pass kwargs that the benchmark's __init__ accepts
             # Filter out None values to let benchmarks use their default values
             for param_name, param in init_params.items():
-                if param_name in self.benchmark_kwargs:
-                    value = self.benchmark_kwargs[param_name]
+                if param_name in merged_kwargs:
+                    value = merged_kwargs[param_name]
                     # Only pass the argument if it's not None, so benchmarks can use defaults
                     if value is not None:
                         valid_kwargs[param_name] = value
@@ -333,10 +359,10 @@ class TaskManager:
 
             # Ensure system_instruction is passed if available and not None
             if (
-                "system_instruction" in self.benchmark_kwargs
-                and self.benchmark_kwargs["system_instruction"] is not None
+                "system_instruction" in merged_kwargs
+                and merged_kwargs["system_instruction"] is not None
             ):
-                valid_kwargs["system_instruction"] = self.benchmark_kwargs["system_instruction"]
+                valid_kwargs["system_instruction"] = merged_kwargs["system_instruction"]
 
             instance = benchmark_class(**valid_kwargs)
 

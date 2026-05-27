@@ -1,12 +1,55 @@
 import argparse
 import concurrent.futures
+import functools
 import json
 import logging
 import os
 import sys
 import time
 import math
-from typing import Dict, List, Optional, Union
+import threading
+from pathlib import Path
+from typing import Dict, List, Optional, Union, Any
+
+from packaging.version import InvalidVersion, Version
+import transformers
+from transformers.utils.import_utils import _LazyModule
+
+
+def ensure_transformers_multimodal_auto_model_compat() -> None:
+    if not getattr(_LazyModule, "_evalchemy_multimodal_auto_model_compat_patched", False):
+        original_getattr = _LazyModule.__getattr__
+
+        def compat_getattr(self, name):
+            if name == "AutoModelForVision2Seq":
+                try:
+                    return original_getattr(self, name)
+                except AttributeError:
+                    alias = original_getattr(self, "AutoModelForImageTextToText")
+                    setattr(self, name, alias)
+                    return alias
+            if name == "AutoModelForImageTextToText":
+                try:
+                    return original_getattr(self, name)
+                except AttributeError:
+                    alias = original_getattr(self, "AutoModelForVision2Seq")
+                    setattr(self, name, alias)
+                    return alias
+            return original_getattr(self, name)
+
+        _LazyModule.__getattr__ = compat_getattr
+        _LazyModule._evalchemy_multimodal_auto_model_compat_patched = True
+
+    vision2seq_cls = getattr(transformers, "AutoModelForVision2Seq", None)
+    image_text_to_text_cls = getattr(transformers, "AutoModelForImageTextToText", None)
+
+    if vision2seq_cls is None and image_text_to_text_cls is not None:
+        transformers.AutoModelForVision2Seq = image_text_to_text_cls
+    if image_text_to_text_cls is None and vision2seq_cls is not None:
+        transformers.AutoModelForImageTextToText = vision2seq_cls
+
+
+ensure_transformers_multimodal_auto_model_compat()
 
 import lm_eval.api.metrics
 import lm_eval.api.registry
@@ -16,7 +59,6 @@ import torch.distributed as dist
 import yaml
 from lm_eval import evaluator as pretrain_evaluator
 from lm_eval import utils
-from lm_eval.__main__ import parse_eval_args, setup_parser
 from lm_eval.api.model import LM
 from lm_eval.loggers import EvaluationTracker, WandbLogger
 from lm_eval.loggers.utils import add_env_info, add_tokenizer_info, get_git_commit_hash
@@ -41,6 +83,425 @@ logger = logging.getLogger(__name__)
 from lm_eval.api.instance import Instance
 
 _SAMPLING_INFO_ONCE = False
+
+
+def start_progress_heartbeat(
+    operation_name: str,
+    interval_seconds: float = 30.0,
+):
+    start_time = time.time()
+    stop_event = threading.Event()
+
+    def _heartbeat():
+        while not stop_event.wait(interval_seconds):
+            elapsed = time.time() - start_time
+            logger.info("%s still running... elapsed=%.1fs", operation_name, elapsed)
+
+    thread = threading.Thread(
+        target=_heartbeat,
+        name=f"heartbeat:{operation_name}",
+        daemon=True,
+    )
+    thread.start()
+    return stop_event, start_time, thread
+
+
+try:
+    from lm_eval.__main__ import parse_eval_args as _lm_eval_parse_eval_args
+    from lm_eval.__main__ import setup_parser as _lm_eval_setup_parser
+except ImportError:
+    _lm_eval_parse_eval_args = None
+    _lm_eval_setup_parser = None
+
+
+def setup_lm_eval_parser():
+    if _lm_eval_setup_parser is not None:
+        return _lm_eval_setup_parser()
+
+    from lm_eval._cli.harness import HarnessCLI
+
+    cli = HarnessCLI()
+    parser = cli._subparsers.choices.get("run")
+    if parser is None:
+        raise RuntimeError("Failed to locate lm-eval 'run' parser for compatibility mode.")
+    parser._evalchemy_harness_cli = cli
+    return parser
+
+
+def parse_lm_eval_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
+    if _lm_eval_parse_eval_args is not None:
+        return _lm_eval_parse_eval_args(parser)
+
+    cli = getattr(parser, "_evalchemy_harness_cli", None)
+    if cli is not None:
+        return cli.parse_args()
+    return parser.parse_args()
+
+
+def str_to_bool(value):
+    if isinstance(value, bool):
+        return value
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
+
+def _is_enable_thinking_kwarg_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "enable_thinking" in message and (
+        "unexpected keyword argument" in message
+        or "got an unexpected keyword argument" in message
+        or "takes no keyword argument" in message
+        or "takes no argument" in message
+        or "macro" in message
+    )
+
+
+def patch_apply_chat_template_for_enable_thinking(enable_thinking: Optional[bool]) -> None:
+    if enable_thinking is None:
+        return
+
+    import transformers
+
+    for class_name in ("PreTrainedTokenizerBase", "ProcessorMixin"):
+        try:
+            cls = getattr(transformers, class_name, None)
+        except Exception as exc:
+            logger.debug("Skipping %s enable_thinking patch: %r", class_name, exc)
+            continue
+        if cls is None or not hasattr(cls, "apply_chat_template"):
+            continue
+
+        if not getattr(cls, "_evalchemy_enable_thinking_patch_installed", False):
+            original = cls.apply_chat_template
+
+            @functools.wraps(original)
+            def wrapped_apply_chat_template(
+                self,
+                *args,
+                __original=original,
+                **kwargs,
+            ):
+                patched_kwargs = dict(kwargs)
+                default_enable_thinking = getattr(
+                    type(self),
+                    "_evalchemy_default_enable_thinking",
+                    None,
+                )
+                if (
+                    default_enable_thinking is not None
+                    and "enable_thinking" not in patched_kwargs
+                ):
+                    patched_kwargs["enable_thinking"] = default_enable_thinking
+                try:
+                    return __original(self, *args, **patched_kwargs)
+                except Exception as exc:
+                    if (
+                        "enable_thinking" not in patched_kwargs
+                        or not _is_enable_thinking_kwarg_error(exc)
+                    ):
+                        raise
+                    patched_kwargs.pop("enable_thinking", None)
+                    return __original(self, *args, **patched_kwargs)
+
+            cls.apply_chat_template = wrapped_apply_chat_template
+            cls._evalchemy_enable_thinking_patch_installed = True
+
+        cls._evalchemy_default_enable_thinking = enable_thinking
+
+
+def _normalize_model_name(model_name: Any) -> Optional[str]:
+    if not isinstance(model_name, str):
+        return None
+    normalized = model_name.strip().strip('"').strip("'")
+    return normalized or None
+
+
+def _extract_model_name_from_model_args(
+    model_args: Union[str, Dict[str, Any], None],
+) -> Optional[str]:
+    if isinstance(model_args, dict):
+        args_dict = model_args
+    elif isinstance(model_args, str) and model_args:
+        args_dict = simple_parse_args_string(model_args)
+    else:
+        args_dict = {}
+
+    for key in ("pretrained", "model", "model_name"):
+        model_name = _normalize_model_name(args_dict.get(key))
+        if model_name is not None:
+            return model_name
+    return None
+
+
+def _is_probable_hf_repo_id(model_name: Any) -> bool:
+    normalized = _normalize_model_name(model_name)
+    if normalized is None:
+        return False
+    if os.path.exists(normalized):
+        return False
+    if normalized.startswith(("/", "./", "../")):
+        return False
+    return normalized.count("/") == 1
+
+
+def _collect_hf_snapshot_status(snapshot_path: Union[str, Path]) -> Dict[str, Any]:
+    path = Path(snapshot_path)
+    status = {
+        "snapshot_path": str(path),
+        "index_exists": False,
+        "required_shards": [],
+        "present_shards": [],
+        "missing_shards": [],
+        "incomplete_files": [],
+        "present_size_bytes": 0,
+    }
+
+    if not path.exists():
+        return status
+
+    for file_path in path.iterdir():
+        if file_path.exists() and file_path.is_file():
+            status["present_size_bytes"] += file_path.stat().st_size
+
+    hub_root = path.parents[1] if len(path.parents) >= 2 else path.parent
+    incomplete_files = sorted(str(p) for p in hub_root.rglob("*.incomplete"))
+    status["incomplete_files"] = incomplete_files
+
+    index_path = path / "model.safetensors.index.json"
+    if not index_path.exists():
+        return status
+
+    status["index_exists"] = True
+    try:
+        index_data = json.loads(index_path.read_text())
+    except Exception:
+        return status
+
+    required_shards = sorted(set(index_data.get("weight_map", {}).values()))
+    present_shards = [shard for shard in required_shards if (path / shard).exists()]
+    missing_shards = [shard for shard in required_shards if not (path / shard).exists()]
+
+    status["required_shards"] = required_shards
+    status["present_shards"] = present_shards
+    status["missing_shards"] = missing_shards
+    return status
+
+
+def ensure_local_hf_snapshot(
+    model_type: Union[str, LM],
+    model_args: Union[str, Dict[str, Any], None],
+) -> Union[str, Dict[str, Any], None]:
+    if not isinstance(model_type, str):
+        return model_args
+
+    model_name = _extract_model_name_from_model_args(model_args)
+    if not _is_probable_hf_repo_id(model_name):
+        return model_args
+
+    try:
+        from huggingface_hub import snapshot_download
+    except Exception as exc:
+        logger.warning("huggingface_hub is unavailable; skipping snapshot preflight for %s: %r", model_name, exc)
+        return model_args
+
+    parsed_args = dict(model_args) if isinstance(model_args, dict) else simple_parse_args_string(model_args or "")
+
+    local_snapshot = None
+    try:
+        local_snapshot = snapshot_download(repo_id=model_name, local_files_only=True)
+    except Exception:
+        local_snapshot = None
+
+    if local_snapshot is not None:
+        status = _collect_hf_snapshot_status(local_snapshot)
+        required = len(status["required_shards"])
+        present = len(status["present_shards"])
+        missing = status["missing_shards"]
+        incomplete = status["incomplete_files"]
+        logger.info(
+            "HF snapshot preflight for %s: local_snapshot=%s, shards_present=%d/%d, incomplete_files=%d",
+            model_name,
+            local_snapshot,
+            present,
+            required,
+            len(incomplete),
+        )
+        if missing:
+            logger.warning("HF snapshot for %s is missing shards: %s", model_name, missing)
+        if incomplete:
+            logger.warning("HF snapshot for %s has incomplete files: %s", model_name, incomplete)
+    else:
+        logger.info("HF snapshot preflight for %s: no local snapshot found; starting download.", model_name)
+
+    heartbeat_stop, heartbeat_start, heartbeat_thread = start_progress_heartbeat(
+        f"Hugging Face snapshot preparation for {model_name}",
+    )
+    try:
+        snapshot_path = snapshot_download(repo_id=model_name)
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=1.0)
+
+    status = _collect_hf_snapshot_status(snapshot_path)
+    if status["missing_shards"] or status["incomplete_files"]:
+        raise RuntimeError(
+            f"Hugging Face snapshot for {model_name} is still incomplete after download. "
+            f"missing_shards={status['missing_shards']} incomplete_files={status['incomplete_files']}"
+        )
+
+    logger.info(
+        "HF snapshot ready for %s: path=%s, shards=%d, size=%.2f GiB, elapsed=%.1fs",
+        model_name,
+        snapshot_path,
+        len(status["present_shards"]),
+        status["present_size_bytes"] / (1024 ** 3),
+        time.time() - heartbeat_start,
+    )
+
+    for key in ("pretrained", "model", "model_name"):
+        if _normalize_model_name(parsed_args.get(key)) == model_name:
+            parsed_args[key] = snapshot_path
+    tokenizer_name = _normalize_model_name(parsed_args.get("tokenizer"))
+    if tokenizer_name in {None, model_name}:
+        parsed_args["tokenizer"] = snapshot_path
+
+    return parsed_args
+
+
+def _is_gemma4_model_name(model_name: Any) -> bool:
+    normalized = _normalize_model_name(model_name)
+    if normalized is None:
+        return False
+    lowered = normalized.lower().replace("_", "-")
+    return "gemma-4" in lowered or "gemma4" in lowered
+
+
+def _parse_version_or_none(version_string: str) -> Optional[Version]:
+    try:
+        return Version(version_string)
+    except InvalidVersion:
+        return None
+
+
+def ensure_vllm_model_compatibility(
+    model_type: Union[str, LM],
+    model_args: Union[str, Dict[str, Any], None],
+) -> None:
+    if not isinstance(model_type, str) or model_type != "vllm":
+        return
+
+    model_name = _extract_model_name_from_model_args(model_args)
+    if not _is_gemma4_model_name(model_name):
+        return
+
+    try:
+        import vllm
+    except Exception:
+        return
+
+    min_vllm = Version("0.19.0")
+    min_transformers = Version("5.5.0")
+    vllm_version_raw = getattr(vllm, "__version__", "unknown")
+    transformers_version_raw = getattr(transformers, "__version__", "unknown")
+    vllm_version = _parse_version_or_none(vllm_version_raw)
+    transformers_version = _parse_version_or_none(transformers_version_raw)
+
+    problems = []
+    if vllm_version is None or vllm_version < min_vllm:
+        problems.append(f"vllm>={min_vllm} is required (found {vllm_version_raw})")
+    if transformers_version is None or transformers_version < min_transformers:
+        problems.append(
+            f"transformers>={min_transformers} is required (found {transformers_version_raw})"
+        )
+
+    if problems:
+        raise ValueError(
+            "Gemma 4 is not compatible with the current vLLM stack. "
+            f"model={model_name}, vllm={vllm_version_raw}, transformers={transformers_version_raw}. "
+            "Gemma 4 support was added in vLLM v0.19.0, and older versions fail while parsing the "
+            "Gemma 4 rope_scaling configuration. "
+            + "; ".join(problems)
+        )
+
+
+def update_model_args_with_key(model_args: Union[str, Dict[str, Any], None], key: str, value):
+    if isinstance(model_args, dict):
+        updated = dict(model_args)
+        updated[key] = value
+        return updated
+
+    serialized_value = "True" if value is True else "False" if value is False else str(value)
+    if not model_args:
+        return f"{key}={serialized_value}"
+
+    args_list = [arg for arg in model_args.split(",") if arg and not arg.startswith(f"{key}=")]
+    args_list.append(f"{key}={serialized_value}")
+    return ",".join(args_list)
+
+
+def normalize_eval_args(args: argparse.Namespace) -> argparse.Namespace:
+    defaults = {
+        "apply_chat_template": False,
+        "batch_size": 1,
+        "check_integrity": False,
+        "confirm_run_unsafe_code": False,
+        "fewshot_as_multiturn": False,
+        "gen_kwargs": None,
+        "hf_hub_log_args": None,
+        "limit": None,
+        "log_samples": False,
+        "max_batch_size": None,
+        "metadata": None,
+        "predict_only": False,
+        "samples": None,
+        "seed": [0, 1234, 1234, 1234],
+        "show_config": False,
+        "trust_remote_code": False,
+        "use_cache": None,
+        "verbosity": None,
+        "wandb_args": None,
+        "wandb_config_args": None,
+        "write_out": False,
+    }
+    for key, value in defaults.items():
+        if not hasattr(args, key):
+            setattr(args, key, value)
+
+    if isinstance(args.tasks, list):
+        args.tasks = ",".join(args.tasks)
+
+    if isinstance(args.hf_hub_log_args, str):
+        args.hf_hub_log_args = simple_parse_args_string(args.hf_hub_log_args)
+    elif args.hf_hub_log_args is None:
+        args.hf_hub_log_args = {}
+    else:
+        args.hf_hub_log_args = dict(args.hf_hub_log_args)
+
+    return args
+
+
+def parse_mapping_arg(value: Optional[Union[str, Dict[str, Any]]]) -> Dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    return simple_parse_args_string(value)
+
+
+def add_argument_if_missing(container, *name_or_flags, **kwargs):
+    option_string_actions = getattr(container, "_option_string_actions", None)
+    if option_string_actions is None and hasattr(container, "_container"):
+        option_string_actions = getattr(container._container, "_option_string_actions", {})
+
+    option_strings = [flag for flag in name_or_flags if isinstance(flag, str) and flag.startswith("-")]
+    if option_string_actions is not None and any(flag in option_string_actions for flag in option_strings):
+        return None
+
+    return container.add_argument(*name_or_flags, **kwargs)
 
 def _instance_post_init_(self) -> None:
     global _SAMPLING_INFO_ONCE
@@ -103,73 +564,104 @@ def setup_custom_parser():
     """
     Create a custom argument parser that extends lm-eval-harness parser.
     """
-    parser = setup_parser()
+    parser = setup_lm_eval_parser()
     db_group = parser.add_argument_group("database")
 
-    db_group.add_argument("--model_id", type=str, default=None, help="Model UUID for direct database tracking")
-
-    parser.add_argument(
-        "--use_database", action="store_true", help="Where to use PostgreSQL Database to track results."
+    add_argument_if_missing(
+        db_group, "--model_id", type=str, default=None, help="Model UUID for direct database tracking"
     )
-    parser.add_argument(
+
+    add_argument_if_missing(
+        parser, "--use_database", action="store_true", help="Where to use PostgreSQL Database to track results."
+    )
+    add_argument_if_missing(
+        parser,
         "--model_name",
         type=str,
         default=None,
         help="Model name for direct database tracking. If not set, the model path will be used instead.",
     )
-    db_group.add_argument(
+    add_argument_if_missing(
+        db_group,
         "--overwrite-database",
         action="store_true",
         help="By default, we do not overwrite database entry, but if this is passed, we will compute eval even if found in database.",
     )
 
-    db_group.add_argument(
+    add_argument_if_missing(
+        db_group,
         "--is_external_model",
         action="store_true",
         help="By default, the model is stored as internal in the database. If set, this is overwritten to external.",
     )
 
-    parser.add_argument(
+    add_argument_if_missing(
+        parser,
         "--creation_location",
         type=str,
         default="NA",
         help="Specifies which compute server is used for evaluating the model.",
     )
 
-    parser.add_argument(
+    add_argument_if_missing(
+        parser,
         "--created_by",
         type=str,
         default="NA",
         help="Specifies who evaluates the model.",
     )
 
-    parser.add_argument(
+    add_argument_if_missing(
+        parser,
         "--annotator_model",
         type=str,
         default="auto",
         help="Judge model used to evaluate generations. Example: gpt-4o-mini-2024-07-18",
     )
-    parser.add_argument(
+    add_argument_if_missing(
+        parser,
         "--max_tokens",
         type=str,
         default=None,
         help="Maximum length of model generatd tokens.",
     )
 
-    parser.add_argument(
+    add_argument_if_missing(
+        parser,
         "--config",
         type=str,
         help="Path to config yaml. Overwrites --batch_size, --tasks, --annotator_model, and --max_tokens",
     )
-    parser.add_argument(
+    add_argument_if_missing(
+        parser,
+        "--df_mcq_data_file",
+        type=str,
+        default=None,
+        help="Path to the JSON file used by the DF_MCQ task.",
+    )
+    add_argument_if_missing(
+        parser,
         "--debug",
         action="store_true",
         help="Run evalutaions in debug mode on a few examples",
     )
-    parser.add_argument(
+    add_argument_if_missing(
+        parser,
         "--custom_chat_template_name",
         type=str,
         default=None,
+    )
+    add_argument_if_missing(
+        parser,
+        "--enable_thinking",
+        nargs="?",
+        const=True,
+        default=None,
+        type=str_to_bool,
+        help=(
+            "Pass `enable_thinking` to the tokenizer chat template when supported. "
+            "Use `--enable_thinking false` to disable it explicitly."
+        ),
     )
 
     return parser
@@ -316,8 +808,12 @@ def evaluate(
     if lm is not None and hasattr(lm, "update_repo_readme") and callable(lm.update_repo_readme):
         try:
             eval_logger.info("Updating repository README with evaluation results...")
+            if isinstance(args.model_args, dict):
+                repo_id = args.model_args.get("repo_id", "")
+            else:
+                repo_id = args.model_args.strip("repo_id=")
             local_readme_path = os.path.join(
-                args.output_path, args.model_args.strip("repo_id=").replace("/", "__") + "_README.md"
+                args.output_path, repo_id.replace("/", "__") + "_README.md"
             )
             lm.update_repo_readme(results, local_readme_path=local_readme_path)
         except Exception as e:
@@ -329,7 +825,10 @@ def evaluate(
     return results
 
 
-def update_model_args_with_name(model_args: str, model_name: str) -> str:
+def update_model_args_with_name(
+    model_args: Union[str, Dict[str, Any], None],
+    model_name: str,
+):
     """
     Update model_args string to include pretrained model name if not already present.
 
@@ -340,6 +839,16 @@ def update_model_args_with_name(model_args: str, model_name: str) -> str:
     Returns:
         str: Updated model args string
     """
+    if isinstance(model_args, dict):
+        updated = dict(model_args)
+        if "pretrained" not in updated:
+            updated["pretrained"] = model_name
+        else:
+            assert (
+                updated["pretrained"] == model_name
+            ), f"Provided model_args contains different pretrained model '{updated['pretrained']}' than specified model_name '{model_name}'"
+        return updated
+
     if not model_args:
         return f"pretrained={model_name}"
 
@@ -363,8 +872,13 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
     # Parse arguments if not provided
     if not args:
         parser = setup_custom_parser()
-        args = parse_eval_args(parser)
+        args = parse_lm_eval_args(parser)
+    args = normalize_eval_args(args)
     args.verbosity = args.verbosity or "INFO"
+
+    if args.enable_thinking is not None:
+        patch_apply_chat_template_for_enable_thinking(args.enable_thinking)
+        logger.info("Applying enable_thinking=%s via tokenizer chat template patch", args.enable_thinking)
 
     if args.custom_chat_template_name is not None:
         patch_hf_apply_chat_template(get_hf_chat_template(args.custom_chat_template_name))
@@ -372,23 +886,38 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
     import socket
     logger.info('hostname: %s', socket.gethostname())
 
+    task_configs = {}
     if args.config is not None:
         # This overwrites `--tasks` and `--batch_size`
         with open(args.config, "r") as file:
             tasks_yaml = yaml.safe_load(file)
         args.tasks = ",".join([t["task_name"] for t in tasks_yaml["tasks"]])
         batch_sizes_list = [int(t["batch_size"]) if t["batch_size"] != "auto" else "auto" for t in tasks_yaml["tasks"]]
+        task_configs = {
+            task["task_name"]: {key: value for key, value in task.items() if key not in {"task_name", "batch_size"}}
+            for task in tasks_yaml["tasks"]
+            if any(key not in {"task_name", "batch_size"} for key in task)
+        }
         args.annotator_model = tasks_yaml.get("annotator_model", args.annotator_model)
-        args.max_tokens = int(tasks_yaml.get("max_tokens", args.max_tokens))
+        config_max_tokens = tasks_yaml.get("max_tokens")
+        if config_max_tokens is not None:
+            args.max_tokens = int(config_max_tokens)
+        elif args.max_tokens is not None:
+            args.max_tokens = int(args.max_tokens)
     else:
         batch_sizes_list = [
             int(args.batch_size) if args.batch_size != "auto" else args.batch_size
             for _ in range(len(args.tasks.split(",")))
         ]
 
+    if args.df_mcq_data_file is not None:
+        task_configs.setdefault("DF_MCQ", {})["data_file"] = args.df_mcq_data_file
+
+    args.df_mcq_data_file = task_configs.get("DF_MCQ", {}).get("data_file")
+
     # Initialize evaluation tracker
     if args.output_path:
-        args.hf_hub_log_args += f",output_path={args.output_path}"
+        args.hf_hub_log_args["output_path"] = args.output_path
     evaluation_tracker = setup_evaluation_tracker(args.output_path, args.use_database)
 
     task_list = args.tasks.split(",")
@@ -415,6 +944,8 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
         model_name = args.model_name
         args.model_args = update_model_args_with_name(args.model_args or "", model_name)
 
+    args.model_args = ensure_local_hf_snapshot(args.model, args.model_args)
+
     # Initialize tasks
     task_manager = InstructTaskManager(
         annotator_model=args.annotator_model,
@@ -422,6 +953,7 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
         debug=args.debug,
         seed=args.seed,
         task_list=task_list,
+        task_configs=task_configs,
         system_instruction=args.system_instruction,
     )
     pretrain_task_manager = PretrainTaskManager(args.verbosity, include_path=args.include_path)
@@ -446,11 +978,23 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
         )
 
     # Initialize model
+    logger.info("Initializing model '%s'...", args.model)
+    heartbeat_stop, heartbeat_start, heartbeat_thread = start_progress_heartbeat(
+        f"Model initialization for {args.model}",
+    )
     try:
         lm = initialize_model(args.model, args.model_args, batch_size=args.batch_size)
     except Exception as e:
         logger.error(f"Failed to initialize model: {str(e)}")
         sys.exit(1)
+    finally:
+        heartbeat_stop.set()
+        heartbeat_thread.join(timeout=1.0)
+
+    logger.info(
+        "Model initialization finished in %.1fs",
+        time.time() - heartbeat_start,
+    )
 
     # Log experiment configuration
     if evaluation_tracker is not None:
@@ -470,7 +1014,7 @@ def cli_evaluate(args: Optional[argparse.Namespace] = None) -> None:
     # Setup wandb logging if requested
     wandb_logger = None
     if args.wandb_args:
-        wandb_logger = WandbLogger(**simple_parse_args_string(args.wandb_args))
+        wandb_logger = WandbLogger(**parse_mapping_arg(args.wandb_args))
 
     # Run evaluation
     results = evaluate(
@@ -513,7 +1057,7 @@ def setup_evaluation_tracker(output_path: str, use_database: bool) -> DCEvaluati
 
 def initialize_model(
     model: Union[str, LM],
-    model_args: Optional[str] = None,
+    model_args: Optional[Union[str, Dict[str, Any]]] = None,
     device: Optional[str] = None,
     batch_size: Optional[int] = None,
 ) -> LM:
@@ -524,8 +1068,8 @@ def initialize_model(
         model (Union[str, LM]):
             Either a string identifier for the model to load from registry,
             or an already instantiated LM object.
-        model_args (Optional[str], optional):
-            Additional arguments for model initialization as a string.
+        model_args (Optional[Union[str, Dict[str, Any]]], optional):
+            Additional arguments for model initialization as a string or dict.
             Only used if model is provided as a string. Defaults to None.
         device (Optional[str], optional):
             Device to load the model on (e.g., 'cuda', 'cpu'). Defaults to None.
@@ -539,18 +1083,32 @@ def initialize_model(
         if model_args is None:
             model_args = ""
 
+        ensure_vllm_model_compatibility(model, model_args)
+
         config = {
             "device": device,
         }
 
-        if "batch_size" not in model_args:
-            if batch_size is not None:
-                model_args += f",batch_size={batch_size}"
+        if isinstance(model_args, dict):
+            if batch_size is not None and "batch_size" not in model_args:
+                model_args = dict(model_args)
+                model_args["batch_size"] = batch_size
+        else:
+            if "batch_size" not in model_args:
+                if batch_size is not None:
+                    model_args += f",batch_size={batch_size}"
 
-        lm = lm_eval.api.registry.get_model(model).create_from_arg_string(
-            model_args,
-            config,
-        )
+        model_cls = lm_eval.api.registry.get_model(model)
+        if isinstance(model_args, dict):
+            lm = model_cls.create_from_arg_obj(
+                model_args,
+                config,
+            )
+        else:
+            lm = model_cls.create_from_arg_string(
+                model_args,
+                config,
+            )
     else:
         lm = model
 
@@ -596,6 +1154,8 @@ def add_results_metadata(results: Dict, batch_sizes_list: List[int], args: argpa
         "limit": args.limit,
         "annotator_model": args.annotator_model,
         "max_tokens": args.max_tokens if args.max_tokens is not None else "default",
+        "df_mcq_data_file": args.df_mcq_data_file,
+        "enable_thinking": args.enable_thinking,
         # "bootstrap_iters": args.bootstrap_iters,
         "gen_kwargs": args.gen_kwargs,
         "random_seed": args.seed[0],
@@ -604,7 +1164,7 @@ def add_results_metadata(results: Dict, batch_sizes_list: List[int], args: argpa
         "fewshot_seed": args.seed[3],
     }
 
-    if isinstance(lm, lm_eval.models.huggingface.HFLM):
+    if lm.__class__.__name__ == "HFLM" or lm.__class__.__module__.endswith("huggingface"):
         results["config"].update(lm.get_model_info())
 
     results["git_hash"] = get_git_commit_hash()

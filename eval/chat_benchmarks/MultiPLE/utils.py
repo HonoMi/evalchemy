@@ -1,6 +1,8 @@
 import re
 from tree_sitter import Language, Parser
 
+from eval.answer_extraction import normalize_generation_text, parse_code_block
+
 LANUGUAGES = [
     "adb",
     "clj",
@@ -129,14 +131,16 @@ def match_brackets(code: str, lang: str):
 
 def extract_generation_code(example: str, lang_code: str, verbose: bool = False):
     task_id = example["task_id"]
-    output = example.get("output", example.get("gpt_completion"))
+    output = normalize_generation_text(example.get("output", example.get("gpt_completion")))
     question = example["prompt"].strip()
     setting = language_settings[lang_code]
     lang = setting["full_name"]
     indent = setting["indent"]
 
     try:
-        code_block: str = re.findall(f"```{lang.lower()}\n(.*?)```", output, re.DOTALL | re.IGNORECASE)[0]
+        code_block = parse_code_block(output, language=lang.lower())
+        if code_block is None:
+            raise ValueError(f"No {lang} code block found")
 
         func_name, func_prefix = get_function_name(question, lang)
         if verbose:

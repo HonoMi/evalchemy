@@ -176,6 +176,8 @@ python -m eval.eval \
     --config configs/light_gpt4omini0718.yaml
 ```
 
+Task-specific settings can also be attached to individual entries in the YAML. For example, `DF_MCQ` accepts `data_file`, and the same path can be overridden from the CLI with `--df_mcq_data_file`.
+
 We add several more command examples in [`eval/examples`](https://github.com/mlfoundations/Evalchemy/tree/main/eval/examples) to help you start using Evalchemy. 
 
 ## 🔧 Advanced Usage

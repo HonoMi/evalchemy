@@ -15,6 +15,7 @@ from torch.utils.data.distributed import DistributedSampler
 from lm_eval.api.model import LM
 from lm_eval.api.instance import Instance
 from lm_eval.models.dummy import DummyLM
+from eval.answer_extraction import normalize_generation_text
 from eval.task import BaseBenchmark
 
 import mix_eval
@@ -194,7 +195,7 @@ class MixEvalBenchmark(BaseBenchmark):
         all_responses = self.compute(model, all_instances)
 
         for idx in list(range(len(eval_dataset.raw_inputs))):
-            eval_dataset.raw_inputs[idx]["response"] = all_responses[idx]
+            eval_dataset.raw_inputs[idx]["response"] = normalize_generation_text(all_responses[idx])
 
         if model.rank == 0:
             with open(response_file, "w") as f:

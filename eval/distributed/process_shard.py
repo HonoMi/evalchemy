@@ -9,8 +9,20 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 
+from eval.answer_extraction import (
+    extract_harmony_content,
+    supports_harmony_postprocess,
+)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def _supports_harmony_postprocess(tokenizer) -> bool:
+    return supports_harmony_postprocess(tokenizer)
+
+
+def _extract_harmony_content(tokenizer, token_ids: list[int], fallback_text: str) -> str:
+    return extract_harmony_content(tokenizer, token_ids, fallback_text)
 
 
 @retry(
@@ -127,7 +139,14 @@ def process_shard(
     outputs = llm.generate(prompts, sampling_params)
 
     # Process outputs and store results
-    outputs_text = [output.outputs[0].text for output in outputs]
+    outputs_text = [
+        _extract_harmony_content(
+            tokenizer,
+            list(getattr(output.outputs[0], "token_ids", []) or []),
+            output.outputs[0].text,
+        )
+        for output in outputs
+    ]
     ds = ds.add_column("model_outputs", outputs_text)
     logger.info(f"Shard successfully processed and loaded into dataset: {len(ds)} examples")
 

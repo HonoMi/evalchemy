@@ -3,13 +3,29 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from bespokelabs import curator
 from datasets import Dataset
 from lm_eval.api.instance import Instance
 from lm_eval.api.model import TemplateLM
 from lm_eval.api.registry import register_model
 from lm_eval.models.api_models import JsonChatStr
 from lm_eval.models.utils import handle_stop_sequences
+
+try:
+    from bespokelabs import curator as _curator
+    _curator_import_error = None
+except ImportError as exc:
+    _curator = None
+    _curator_import_error = exc
+
+
+def _require_curator():
+    if _curator is None:
+        raise ImportError(
+            "The `curator` model requires a `bespokelabs` installation that provides "
+            "`bespokelabs.curator` (for example via the legacy `bespokelabs-curator` package). "
+            "The currently installed `bespokelabs` package does not expose that module."
+        ) from _curator_import_error
+    return _curator
 
 
 @register_model("curator")
@@ -28,6 +44,7 @@ class CuratorAPIModel(TemplateLM):
         **kwargs,
     ):
         super().__init__()
+        self._curator = _require_curator()
 
         self.model_name = model or pretrained
 
@@ -111,7 +128,7 @@ class CuratorAPIModel(TemplateLM):
         if self.llm is None:
             self.eos = eos
             self.gen_kwargs = gen_kwargs.copy()
-            self.llm = curator.LLM(
+            self.llm = self._curator.LLM(
                 model_name=self.model_name, generation_params=gen_kwargs, backend_params=self.backend_params.copy()
             )
         else:
@@ -120,7 +137,7 @@ class CuratorAPIModel(TemplateLM):
                     "Recreating curator LLM with new generation parameters, make sure this doesn't happen at every request"
                 )
                 self.gen_kwargs = gen_kwargs.copy()
-                self.llm = curator.LLM(
+                self.llm = self._curator.LLM(
                     model_name=self.model_name, generation_params=gen_kwargs, backend_params=self.backend_params.copy()
                 )
         return messages
